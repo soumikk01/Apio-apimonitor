@@ -2,7 +2,6 @@ import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import * as nodemailer from 'nodemailer';
 import type { Transporter } from 'nodemailer';
-import { passwordResetTemplate } from './templates/password-reset.template';
 import { otpTemplate, OtpType } from './templates/otp.template';
 import { welcomeTemplate } from './templates/welcome.template';
 
@@ -44,24 +43,6 @@ export class EmailService {
     if (!this.enabled || !this.transporter) return;
     const info = await this.transporter.sendMail({ from: this.from, to, subject, html });
     this.logger.log(`Email sent to ${to} → messageId: ${info.messageId}`);
-  }
-
-  // ── Password Reset ─────────────────────────────────────────────────────────
-  async sendPasswordReset(to: string, resetUrl: string): Promise<void> {
-    if (!this.enabled) {
-      this.logger.debug(`[email disabled] would send password reset to ${to}`);
-      return;
-    }
-    try {
-      await this.send(
-        to,
-        `Reset your ${this.appName} password`,
-        passwordResetTemplate(to, resetUrl),
-      );
-    } catch (err) {
-      this.logger.error(`Failed to send password reset email to ${to}`, err);
-      throw err;
-    }
   }
 
   // ── OTP / Verification Code ────────────────────────────────────────────────

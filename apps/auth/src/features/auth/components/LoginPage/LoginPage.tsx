@@ -1,12 +1,13 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { useAuth } from '@/features/auth/hooks/useAuth';
 import ButtonLogoSpinner from '@/components/ButtonLogoSpinner/ButtonLogoSpinner';
 import GooeyButton from '@/components/GooeyButton/GooeyButton';
 import GooeyErrorFilter from '@/components/GooeyErrorFilter/GooeyErrorFilter';
 import AnimatedPasswordInput from '../../../../components/AnimatedPasswordInput/AnimatedPasswordInput';
+import { ApioTypeWriter } from '@/components/ApioTypeWriter/ApioTypeWriter';
 import styles from './LoginPage.module.scss';
 
 /* ── Sparkle Background (mirrors LandingPage stars) ── */
@@ -26,18 +27,22 @@ export default function LoginPage() {
 
   const { login, loginWithGoogle, loginWithGitHub } = useAuth();
 
-  const [email, setEmail] = useState(() => {
-    if (typeof window === 'undefined') return '';
-    return localStorage.getItem('apio_last_email') ?? '';
-  });
-  const [lastUsedEmail] = useState(() => {
-    if (typeof window === 'undefined') return '';
-    return localStorage.getItem('apio_last_email') ?? '';
-  });
+  // ── Hydration-safe: always start empty on server, populate after mount ──
+  const [email, setEmail] = useState('');
+  const [lastUsedEmail, setLastUsedEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [isShaking, setIsShaking] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  useEffect(() => {
+    const saved = localStorage.getItem('apio_last_email') ?? '';
+    if (saved) {
+      setEmail(saved);
+      setLastUsedEmail(saved);
+    }
+  }, []);
+
 
   const handleInvalid = () => {
     setIsShaking(true);
@@ -62,6 +67,11 @@ export default function LoginPage() {
       // redirect handled inside useAuth.login()
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Something went wrong. Please try again.';
+      // Special sentinel: BetterAuth rejected login because email is unverified
+      if (msg === '__EMAIL_NOT_VERIFIED__') {
+        window.location.href = `/check-email?email=${encodeURIComponent(email.trim())}`;
+        return;
+      }
       setError(msg);
       setIsSubmitting(false);
       handleInvalid();
@@ -72,6 +82,18 @@ export default function LoginPage() {
     <div className={`${styles.page} ${styles.dark}`}>
       <GooeyErrorFilter isError={isShaking} />
       <div className={styles.splitLayout}>
+
+        {/* ── SPLIT BACK BUTTON ── */}
+        <a
+          href={process.env.NEXT_PUBLIC_APP_URL ?? 'http://localhost:3000'}
+          className={styles.splitBackBtn}
+          aria-label="Back to Home"
+        >
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M19 12H5M12 19l-7-7 7-7" />
+          </svg>
+        </a>
+
         <div className={styles.leftPane}>
           <div className={styles.noiseOverlay} />
           <SpringBackground />
@@ -199,7 +221,10 @@ export default function LoginPage() {
       {/* ── RIGHT VIEW ── */}
       <div className={styles.rightPane}>
         <div className={styles.patternOverlay} />
-        
+
+        {/* ── STRIPE-STYLE TYPEWRITER ── */}
+        <ApioTypeWriter />
+
         {/* ── CENTER COPY ── */}
         <div className={styles.rightCopy}>
           <div className={styles.introIcon}>
@@ -222,7 +247,6 @@ export default function LoginPage() {
               </svg>
               <span className={styles.logoMark}>Apio</span>
             </div>
-            <a href={process.env.NEXT_PUBLIC_APP_URL ?? 'http://localhost:3000'} className={styles.backLink}>← Home</a>
           </nav>
         </header>
 

@@ -6,8 +6,8 @@ import { validateEmail } from './email-validator';
 import { randomBytes } from 'crypto';
 import * as bcrypt from 'bcryptjs';
 import * as nodemailer from 'nodemailer';
-import { passwordResetTemplate } from '../email/templates/password-reset.template';
 import { otpTemplate, OtpType } from '../email/templates/otp.template';
+import { emailVerificationTemplate } from '../email/templates/email-verification.template';
 
 // ── Prisma client (singleton — shared with the rest of the app) ───────────────
 // BetterAuth 1.6.9 generates random base-62 string IDs that are not valid
@@ -82,15 +82,24 @@ const smtpTransporter =
 
 async function sendMail(to: string, subject: string, html: string): Promise<void> {
   if (!smtpTransporter) {
-    console.warn(`[BetterAuth] Email not sent to ${to} — SMTP_USER/SMTP_PASS not configured.`);
+    console.warn(`[BetterAuth] ⚠ Email not sent to ${to} — SMTP_USER/SMTP_PASS not configured.`);
     return;
   }
-  await smtpTransporter.sendMail({
-    from: FROM_EMAIL,
-    to,
-    subject,
-    html,
-  });
+  console.log(`[BetterAuth] 📧 Attempting to send "${subject}" to ${to} via ${_smtpHost}:${_smtpPort}`);
+  try {
+    const info = await smtpTransporter.sendMail({
+      from: FROM_EMAIL,
+      to,
+      subject,
+      html,
+    });
+    console.log(`[BetterAuth] ✅ Email sent to ${to} — messageId: ${info.messageId}`);
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(`[BetterAuth] ❌ Failed to send email to ${to}: ${msg}`);
+    // Re-throw so BetterAuth doesn't silently ignore the failure
+    throw err;
+  }
 }
 
 const FROM_EMAIL = process.env.EMAIL_FROM ?? _smtpUser ?? 'noreply@apio.one';
@@ -108,6 +117,15 @@ const _auth: any = betterAuth({
   // tries to match routes against '/' instead of '/api/v1/auth/better'.
   basePath: '/api/v1/auth/better',
 
+  // ── Rate limiting (FIX: brute-force OTP protection) ──────────────────────
+  // Limits all auth endpoints to 5 requests per 15 minutes per IP.
+  // This prevents brute-forcing the 6-digit OTP (10^6 combos → blocked after 5 attempts).
+  rateLimit: {
+    window: 15 * 60,  // 15 minutes (seconds)
+    max: 5,           // max 5 requests per window per IP on sensitive endpoints
+    storage: 'memory',
+  },
+
   // Where BetterAuth sends users after clicking the email verification link
   // Points to apps/auth verify-email page which handles the token
   emailVerificationCallbackURL:
@@ -121,21 +139,33 @@ const _auth: any = betterAuth({
   // ── Email & Password ─────────────────────────────────────────────────────
   emailAndPassword: {
     enabled: true,
-    // ⚠️  Flip to true once AWS SES is configured in .env
-    requireEmailVerification: false,
+    // Require email verification before login is allowed.
+    requireEmailVerification: true,
     minPasswordLength: 8,
     maxPasswordLength: 128,
-    // Use bcrypt for all password ops — makes old migrated accounts
-    // (which store $2a$ bcrypt hashes) work on first sign-in.
+    // Use bcrypt for all password ops — makes old migrated accounts work on first sign-in.
     password: passwordBcrypt,
-    sendResetPassword: async ({ user, url }: { user: { email: string }; url: string }) => {
+    // NOTE: sendResetPassword is intentionally omitted.
+    // The app uses OTP-based reset (emailOTP plugin) only.
+  },
+
+  // ── Email Verification (BetterAuth v1.x top-level config) ────────────────
+  // In BetterAuth ≥1.x, sendVerificationEmail lives here — NOT in emailAndPassword.
+  // sendOnSignUp: true  → BetterAuth auto-calls this on every new sign-up.
+  emailVerification: {
+    sendOnSignUp: true,
+    autoSignInAfterVerification: true,
+    sendVerificationEmail: async ({ user, url }: { user: { email: string }; url: string }) => {
+      console.log(`[BetterAuth] 🔐 sendVerificationEmail triggered for ${user.email}`);
+      console.log(`[BetterAuth] 🔗 Verification URL: ${url}`);
       await sendMail(
         user.email,
-        'Reset your Apio password',
-        passwordResetTemplate(user.email, url),
+        'Verify your Apio account',
+        emailVerificationTemplate(url),
       );
     },
   },
+
 
   // ── Social Providers ─────────────────────────────────────────────────────
   // Providers are only registered when both client credentials are present.

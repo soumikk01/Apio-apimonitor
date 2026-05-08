@@ -7,6 +7,7 @@ import ButtonLogoSpinner from '../../../../components/ButtonLogoSpinner/ButtonLo
 import GooeyButton from '../../../../components/GooeyButton/GooeyButton';
 import GooeyErrorFilter from '../../../../components/GooeyErrorFilter/GooeyErrorFilter';
 import AnimatedPasswordInput from '../../../../components/AnimatedPasswordInput/AnimatedPasswordInput';
+import { ApioTypeWriter } from '@/components/ApioTypeWriter/ApioTypeWriter';
 import styles from './RegisterPage.module.scss';
 
 /* ── Sparkle Background (mirrors LandingPage stars) ── */
@@ -27,10 +28,74 @@ export default function RegisterPage() {
 
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
+  const [emailError, setEmailError] = useState('');
+  const [emailTouched, setEmailTouched] = useState(false);
+  const [emailValid, setEmailValid] = useState(false);
+  const [emailChecking, setEmailChecking] = useState(false);
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [isShaking, setIsShaking] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  const BLOCKED_DOMAINS = new Set([
+    'mailinator.com','trashmail.com','guerrillamail.com','guerrillamail.net',
+    'temp-mail.org','tempmail.com','10minutemail.com','10minutemail.net',
+    'yopmail.com','yopmail.fr','throwaway.email','fakeinbox.com',
+    'maildrop.cc','sharklasers.com','grr.la','spam4.me','discard.email',
+    'spamgourmet.com','mailnull.com','mailnesia.com','trashmail.me',
+    'trashmail.at','trashmail.io','trashmail.xyz','wegwerfmail.de',
+  ]);
+
+  const validateEmail = (val: string): string => {
+    const v = val.trim();
+    if (!v) return 'Email is required.';
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(v)) return 'Enter a valid email address.';
+    const domain = v.toLowerCase().split('@')[1] ?? '';
+    if (BLOCKED_DOMAINS.has(domain)) return 'Disposable emails are not allowed.';
+    return '';
+  };
+
+  const handleEmailChange = (val: string) => {
+    setEmail(val);
+    if (emailTouched) {
+      const err = validateEmail(val);
+      setEmailError(err);
+      setEmailValid(!err);
+    }
+  };
+
+  const handleEmailBlur = async () => {
+    setEmailTouched(true);
+    // Run instant local checks first
+    const localErr = validateEmail(email);
+    if (localErr) {
+      setEmailError(localErr);
+      setEmailValid(false);
+      return;
+    }
+    // Local checks passed — now verify domain via backend DNS MX lookup
+    setEmailChecking(true);
+    setEmailError('');
+    try {
+      const API = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000/api/v1';
+      const res = await fetch(`${API}/auth/check-email?email=${encodeURIComponent(email.trim())}`);
+      if (res.ok) {
+        const data = (await res.json()) as { valid: boolean; reason?: string };
+        if (!data.valid) {
+          setEmailError(data.reason ?? 'This email address cannot receive mail.');
+          setEmailValid(false);
+        } else {
+          setEmailError('');
+          setEmailValid(true);
+        }
+      }
+      // If the endpoint is unreachable, fail open (don’t block the user)
+    } catch {
+      // network error — allow through
+    } finally {
+      setEmailChecking(false);
+    }
+  };
 
   const handleInvalid = () => {
     setIsShaking(true);
@@ -48,25 +113,13 @@ export default function RegisterPage() {
       return;
     }
 
-    // Basic email format check
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email.trim())) {
-      setError('Please enter a valid email address.');
-      handleInvalid();
-      return;
-    }
-
-    // Client-side disposable domain check (instant — no network)
-    const BLOCKED = new Set([
-      'mailinator.com','trashmail.com','guerrillamail.com','guerrillamail.net',
-      'temp-mail.org','tempmail.com','10minutemail.com','10minutemail.net',
-      'yopmail.com','yopmail.fr','throwaway.email','fakeinbox.com',
-      'maildrop.cc','sharklasers.com','grr.la','spam4.me','discard.email',
-      'spamgourmet.com','mailnull.com','mailnesia.com','trashmail.me',
-      'trashmail.at','trashmail.io','trashmail.xyz','wegwerfmail.de',
-    ]);
-    const domain = email.trim().toLowerCase().split('@')[1] ?? '';
-    if (BLOCKED.has(domain)) {
-      setError('Disposable email addresses are not allowed. Please use a real email.');
+    // ── Inline email format check ───────────────────────────────────────────
+    const localErr = validateEmail(email);
+    if (localErr) {
+      setEmailTouched(true);
+      setEmailError(localErr);
+      setEmailValid(false);
+      setError(localErr);
       handleInvalid();
       return;
     }
@@ -75,6 +128,35 @@ export default function RegisterPage() {
       setError('Password must be at least 8 characters.');
       handleInvalid();
       return;
+    }
+
+    // ── DNS MX check — always runs on submit even if blur was skipped ───────
+    // Skip if we already confirmed valid via blur to avoid a duplicate call
+    if (!emailValid) {
+      setEmailChecking(true);
+      try {
+        const API = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000/api/v1';
+        const res = await fetch(`${API}/auth/check-email?email=${encodeURIComponent(email.trim())}`);
+        if (res.ok) {
+          const data = (await res.json()) as { valid: boolean; reason?: string };
+          if (!data.valid) {
+            const msg = data.reason ?? 'This email address cannot receive mail.';
+            setEmailTouched(true);
+            setEmailError(msg);
+            setEmailValid(false);
+            setError(msg);
+            handleInvalid();
+            setEmailChecking(false);
+            return;
+          }
+          setEmailValid(true);
+          setEmailError('');
+        }
+      } catch {
+        // Network error — fail open, let the server decide
+      } finally {
+        setEmailChecking(false);
+      }
     }
 
     setIsSubmitting(true);
@@ -89,14 +171,29 @@ export default function RegisterPage() {
     }
   };
 
+
   return (
     <div className={`${styles.page} ${styles.dark}`}>
       <GooeyErrorFilter isError={isShaking} />
-      <div className={styles.splitLayout}>
+    <div className={styles.splitLayout}>
+
+        {/* ── SPLIT BACK BUTTON ── */}
+        <a
+          href={process.env.NEXT_PUBLIC_APP_URL ?? 'http://localhost:3000'}
+          className={styles.splitBackBtn}
+          aria-label="Back to Home"
+        >
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M19 12H5M12 19l-7-7 7-7" />
+          </svg>
+        </a>
 
         {/* ── LEFT VIEW (Pattern & Navbar) ── */}
         <div className={styles.leftPane}>
           <div className={styles.patternOverlay} />
+
+          {/* ── STRIPE-STYLE TYPEWRITER ── */}
+          <ApioTypeWriter />
           
           {/* ── CENTER COPY ── */}
           <div className={styles.rightCopy}>
@@ -121,7 +218,6 @@ export default function RegisterPage() {
                 </svg>
                 <span className={styles.logoMark}>Apio</span>
               </div>
-              <a href={process.env.NEXT_PUBLIC_APP_URL ?? 'http://localhost:3000'} className={styles.backLink}>← Home</a>
             </nav>
           </header>
 
@@ -168,20 +264,61 @@ export default function RegisterPage() {
                 </div>
                 
                 <div className={styles.field}>
-                  <label className={styles.label} htmlFor="register-email">Email</label>
-                  <div className={`${styles.input} ${styles.inputWrapper} ${isShaking ? styles.inputError : ''}`}>
+                  <label className={styles.label} htmlFor="register-email">
+                    Email
+                  </label>
+                  <div className={`${styles.input} ${styles.inputWrapper} ${isShaking && !email.trim() ? styles.inputError : ''} ${emailTouched && emailError && !emailChecking ? styles.inputError : ''}`}>
                     <input
                       id="register-email"
                       className="apio-autofill-transparent"
                       type="email"
                       placeholder="you@example.com"
                       value={email}
-                      onChange={(e) => setEmail(e.target.value)}
+                      onChange={(e) => handleEmailChange(e.target.value)}
+                      onBlur={handleEmailBlur}
                       autoComplete="email"
                       required
-                      style={{ width: '100%', border: 'none', outline: 'none', background: 'transparent', padding: 0, margin: 0, color: 'inherit', fontFamily: 'inherit', fontSize: 'inherit' }}
+                      disabled={emailChecking}
+                      aria-describedby={emailError ? 'email-error' : emailChecking ? 'email-checking' : undefined}
+                      aria-invalid={emailTouched && !!emailError && !emailChecking}
+                      style={{ width: '100%', border: 'none', outline: 'none', background: 'transparent', padding: 0, margin: 0, color: 'inherit', fontFamily: 'inherit', fontSize: 'inherit', opacity: emailChecking ? 0.6 : 1 }}
                     />
                   </div>
+
+                  {/* Checking spinner */}
+                  {emailChecking && (
+                    <span
+                      id="email-checking"
+                      style={{
+                        display: 'flex', alignItems: 'center', gap: '5px',
+                        fontSize: '0.75rem', color: 'rgba(255,255,255,0.45)', fontWeight: 500,
+                        marginTop: '4px', paddingLeft: '2px',
+                      }}
+                    >
+                      <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" style={{ animation: 'spin 0.8s linear infinite', flexShrink: 0 }}>
+                        <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/>
+                      </svg>
+                      Checking email domain…
+                    </span>
+                  )}
+
+                  {/* Error message */}
+                  {emailTouched && emailError && !emailChecking && (
+                    <span
+                      id="email-error"
+                      role="alert"
+                      style={{
+                        display: 'flex', alignItems: 'center', gap: '4px',
+                        fontSize: '0.75rem', color: '#ef4444', fontWeight: 500,
+                        marginTop: '4px', paddingLeft: '2px',
+                      }}
+                    >
+                      <svg viewBox="0 0 16 16" fill="currentColor" width="12" height="12" style={{ flexShrink: 0 }}>
+                        <path d="M8 1a7 7 0 1 0 0 14A7 7 0 0 0 8 1zm-.75 4a.75.75 0 0 1 1.5 0v3a.75.75 0 0 1-1.5 0V5zm.75 6.5a1 1 0 1 1 0-2 1 1 0 0 1 0 2z"/>
+                      </svg>
+                      {emailError}
+                    </span>
+                  )}
                 </div>
 
                 <div className={styles.field}>
@@ -209,7 +346,7 @@ export default function RegisterPage() {
                 <GooeyButton 
                   type="submit" 
                   className={styles.submitBtn} 
-                  isLoading={isSubmitting}
+                  isLoading={isSubmitting || emailChecking}
                   icon={
                     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
                       <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
@@ -219,10 +356,15 @@ export default function RegisterPage() {
                     </svg>
                   }
                 >
-                  {isSubmitting ? (
+                  {emailChecking ? (
                     <span className={styles.loaderContent}>
                       <ButtonLogoSpinner />
-                      Creating account...
+                      Verifying email…
+                    </span>
+                  ) : isSubmitting ? (
+                    <span className={styles.loaderContent}>
+                      <ButtonLogoSpinner />
+                      Creating account…
                     </span>
                   ) : 'Create Account'}
                 </GooeyButton>

@@ -64,7 +64,7 @@ export function otpTemplate(otp: string, type: OtpType): string {
       This is an automated message. <strong style="color:#64748b;">Please do not reply.</strong>
     </p>
 
-    ${footerNote(`Expires in <strong>10 minutes</strong>. ${sub}`)}
+    ${footerNote(`Expires in <strong>5 minutes</strong>. ${sub}`)}
   `;
 
   return baseTemplate(content);
