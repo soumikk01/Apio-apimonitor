@@ -45,35 +45,26 @@ export class AnalyticsService {
     if (cached) return cached;
 
     const since = this.rangeToDate(range);
-    const calls = await this.prisma.apiCall.findMany({
-      where: { projectId, createdAt: { gte: since } },
-      select: { status: true, latency: true, statusCode: true },
-      take: 50_000, // Safety cap — prevents OOM on large projects
-    });
+    const where = { projectId, createdAt: { gte: since } };
 
-    const total = calls.length;
-    if (!total) {
-      const empty = {
-        total: 0,
-        errorRate: 0,
-        avgLatency: 0,
-        successRate: 0,
-        range,
-      };
-      await this.cache.set(cacheKey, empty, SUMMARY_TTL);
-      return empty;
-    }
-
-    const errors = calls.filter(
-      (c) => c.status === 'CLIENT_ERROR' || c.status === 'SERVER_ERROR',
-    ).length;
-    const avgLatency = calls.reduce((sum, c) => sum + c.latency, 0) / total;
+    // ⭐ 3 parallel lightweight DB queries — replaces loading 50,000 rows into RAM.
+    // MongoDB computes counts and average server-side; Node.js receives only numbers.
+    const [total, errors, latencyAgg] = await Promise.all([
+      this.prisma.apiCall.count({ where }),
+      this.prisma.apiCall.count({
+        where: { ...where, status: { in: ['CLIENT_ERROR', 'SERVER_ERROR'] } },
+      }),
+      this.prisma.apiCall.aggregate({
+        where,
+        _avg: { latency: true },
+      }),
+    ]);
 
     const result = {
       total,
-      errorRate: Math.round((errors / total) * 100),
-      successRate: Math.round(((total - errors) / total) * 100),
-      avgLatency: Math.round(avgLatency),
+      errorRate:   total > 0 ? Math.round((errors / total) * 100) : 0,
+      successRate: total > 0 ? Math.round(((total - errors) / total) * 100) : 0,
+      avgLatency:  Math.round(latencyAgg._avg.latency ?? 0),
       range,
     };
 
@@ -95,6 +86,10 @@ export class AnalyticsService {
     if (cached) return cached;
 
     const since = this.rangeToDate(range);
+
+    // Fetch the most-recent 5,000 calls within the time window.
+    // Prisma groupBy is not supported on MongoDB, so we group in Node.js.
+    // 5k rows at ~200 bytes each = ~1 MB — safe, and covers high-traffic APIs.
     const calls = await this.prisma.apiCall.findMany({
       where: { projectId, createdAt: { gte: since } },
       select: {
@@ -104,10 +99,11 @@ export class AnalyticsService {
         status: true,
         latency: true,
       },
-      take: 50_000, // Safety cap — prevents OOM/timeout on large projects
+      orderBy: { createdAt: 'desc' },
+      take: 5_000, // Reduced from 50,000 — sufficient for top-endpoint analysis
     });
 
-    // Group by method + path
+    // Group by method + host + path in memory
     const map = new Map<
       string,
       { count: number; errors: number; totalLatency: number }
@@ -130,7 +126,8 @@ export class AnalyticsService {
         errorRate: Math.round((data.errors / data.count) * 100),
         avgLatency: Math.round(data.totalLatency / data.count),
       }))
-      .sort((a, b) => b.count - a.count);
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 100); // Return top 100 endpoints only
 
     await this.cache.set(cacheKey, result, ENDPOINTS_TTL);
     return result;

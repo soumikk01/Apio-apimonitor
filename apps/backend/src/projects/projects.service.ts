@@ -172,47 +172,32 @@ export class ProjectsService {
 
     await this.findOne(projectId, userId); // ownership guard — only on cache miss
 
-    const calls = await this.prisma.apiCall.findMany({
-      where: { projectId },
-      select: { status: true, latency: true, createdAt: true },
-      take: 10_000, // Safety cap — prevents OOM on large projects
-      orderBy: { createdAt: 'desc' },
-    });
+    const since60s = new Date(Date.now() - 60_000);
 
-    const total = calls.length;
-    if (total === 0) {
-      const result = {
-        total: 0,
-        errors: 0,
-        errorRate: 0,
-        avgLatency: 0,
-        successRate: 100,
-        activeInstances: 0,
-      };
-      await this.cache.set(cacheKey, result, STATS_TTL);
-      return result;
-    }
-
-    const errors = calls.filter(
-      (c) => c.status === 'CLIENT_ERROR' || c.status === 'SERVER_ERROR',
-    ).length;
-    const avgLatency = Math.round(
-      calls.reduce((sum, c) => sum + c.latency, 0) / total,
-    );
-
-    // Calls in the last 60 seconds count as "live"
-    const now = Date.now();
-    const recentCalls = calls.filter(
-      (c) => now - new Date(c.createdAt).getTime() < 60_000,
-    ).length;
+    // ⭐ 4 parallel lightweight DB queries — replaces loading 10,000 rows into RAM.
+    // Each query returns a single number; MongoDB does all aggregation server-side.
+    const [total, errors, latencyAgg, recentCount] = await Promise.all([
+      this.prisma.apiCall.count({ where: { projectId } }),
+      this.prisma.apiCall.count({
+        where: { projectId, status: { in: ['CLIENT_ERROR', 'SERVER_ERROR'] } },
+      }),
+      this.prisma.apiCall.aggregate({
+        where: { projectId },
+        _avg: { latency: true },
+      }),
+      // Calls in the last 60 seconds count as "live"
+      this.prisma.apiCall.count({
+        where: { projectId, createdAt: { gte: since60s } },
+      }),
+    ]);
 
     const result = {
       total,
       errors,
-      errorRate: parseFloat(((errors / total) * 100).toFixed(1)),
-      avgLatency,
-      successRate: parseFloat((((total - errors) / total) * 100).toFixed(1)),
-      activeInstances: recentCalls > 0 ? 1 : 0,
+      errorRate:   total > 0 ? parseFloat(((errors / total) * 100).toFixed(1)) : 0,
+      avgLatency:  Math.round(latencyAgg._avg.latency ?? 0),
+      successRate: total > 0 ? parseFloat((((total - errors) / total) * 100).toFixed(1)) : 100,
+      activeInstances: recentCount > 0 ? 1 : 0,
     };
 
     await this.cache.set(cacheKey, result, STATS_TTL);
@@ -220,21 +205,32 @@ export class ProjectsService {
   }
 
   /**
-   * Return the most recent API calls — cached 15 seconds.
-   * Seeds the Overview feed on page load before live socket events arrive.
+   * Return the most recent API calls with cursor-based pagination.
+   * The first page (no cursor) seeds the live feed on load.
+   * Subsequent pages use the returned `nextCursor` to load older records.
+   *
+   * Response: { data: ApiCall[], nextCursor: string | null, hasMore: boolean }
    */
-  async getRecentCalls(projectId: string, userId: string, limit = 50) {
+  async getRecentCalls(
+    projectId: string,
+    userId: string,
+    limit = 50,
+    cursor?: string,
+  ) {
     // Fix #8: same userId scoping as getStats
-    const cacheKey = `calls:${projectId}:u${userId}:${limit}`;
-    const cached = await this.cache.get<object[]>(cacheKey);
+    const cacheKey = `calls:${projectId}:u${userId}:${limit}:${cursor ?? 'first'}`;
+    const cached = await this.cache.get<object>(cacheKey);
     if (cached) return cached;
 
     await this.findOne(projectId, userId); // guard — only on cache miss
 
-    const calls = await this.prisma.apiCall.findMany({
+    // Fetch one extra row to determine whether another page exists.
+    // Never cache the extra item — it's only used for the hasMore flag.
+    const rows = await this.prisma.apiCall.findMany({
       where: { projectId },
       orderBy: { createdAt: 'desc' },
-      take: limit,
+      take: limit + 1,
+      ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
       select: {
         id: true,
         method: true,
@@ -249,8 +245,13 @@ export class ProjectsService {
       },
     });
 
-    await this.cache.set(cacheKey, calls, CALLS_TTL);
-    return calls;
+    const hasMore = rows.length > limit;
+    const data    = hasMore ? rows.slice(0, limit) : rows;
+    const nextCursor = hasMore ? data[data.length - 1].id : null;
+
+    const result = { data, nextCursor, hasMore };
+    await this.cache.set(cacheKey, result, CALLS_TTL);
+    return result;
   }
 
   /** Add a new member to the project */
