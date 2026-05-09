@@ -4,7 +4,6 @@ import { useState, useEffect, useCallback } from 'react';
 import { authClient } from '@/lib/auth-client';
 
 const BETTER_AUTH_BASE =
-  // NEXT_PUBLIC_API_URL already contains /api/v1, so we only append /auth/better
   `${process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000/api/v1'}/auth/better`;
 
 // ── Error sanitizer ───────────────────────────────────────────────────────────
@@ -70,8 +69,14 @@ export function useAuth() {
     const { data, error } = await authClient.signIn.email({ email, password });
 
     if (error) {
-      if (error.status === 401 || error.status === 403)
+      if (error.status === 401 || error.status === 403) {
+        // BetterAuth returns 403 when email is not verified
+        const msg = error.message?.toLowerCase() ?? '';
+        if (msg.includes('verify') || msg.includes('verified') || msg.includes('not verified') || error.code === 'EMAIL_NOT_VERIFIED') {
+          throw new Error('__EMAIL_NOT_VERIFIED__');
+        }
         throw new Error('Incorrect email or password.');
+      }
       if (error.status === 429)
         throw new Error('Too many login attempts. Please wait a moment and try again.');
       throw new Error(sanitizeError(error.message, 'Sign in failed. Please try again.'));
@@ -106,9 +111,21 @@ export function useAuth() {
 
     if (!data?.user) throw new Error('Registration failed. Please try again.');
 
-    setState({ user: data.user as AuthUser, isAuthenticated: true, isLoading: false });
+    // When requireEmailVerification is enabled, emailVerified is false after sign-up.
+    // BetterAuth does NOT always auto-send the verification email during sign-up —
+    // explicitly request it here so the user always receives the link.
+    if (data.user.emailVerified === false) {
+      try {
+        await authClient.sendVerificationEmail({ email });
+      } catch {
+        // Non-fatal — user can request resend from the check-email page
+      }
+      // Pass email in URL so check-email page can display it
+      window.location.href = `/check-email?email=${encodeURIComponent(email)}`;
+      return;
+    }
 
-    // Redirect to web dashboard after successful registration
+    setState({ user: data.user as AuthUser, isAuthenticated: true, isLoading: false });
     const baseUrl = process.env.NEXT_PUBLIC_APP_URL ?? 'http://localhost:3000';
     window.location.href = `${baseUrl}/projects`;
   }, []);
@@ -129,36 +146,42 @@ export function useAuth() {
     });
   }, []);
 
-  // ── Forgot Password — send reset email ────────────────────────────────────
-  // Direct fetch avoids BetterAuth TS2349 plugin type-inference collision
-  const sendPasswordResetEmail = useCallback(async (email: string) => {
-    const redirectTo =
-      `${process.env.NEXT_PUBLIC_AUTH_URL ?? 'http://localhost:3001'}/reset-password`;
-    const res = await fetch(`${BETTER_AUTH_BASE}/request-password-reset`, {
+  // ── Forgot Password (OTP flow) — Step 1: request password reset OTP ────────
+  // BetterAuth emailOTP plugin route: POST /email-otp/request-password-reset
+  const sendForgotPasswordOtp = useCallback(async (email: string) => {
+    const res = await fetch(`${BETTER_AUTH_BASE}/email-otp/request-password-reset`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       credentials: 'include',
-      body: JSON.stringify({ email, redirectTo }),
+      body: JSON.stringify({ email }),
     });
     if (!res.ok) {
       const data = await res.json().catch(() => ({})) as { message?: string };
-      throw new Error(data.message ?? 'Failed to send verification OTP. Please try again.');
+      throw new Error(sanitizeError(data.message, 'Failed to send OTP. Please try again.'));
     }
   }, []);
 
-  // ── Reset Password (from email link) ──────────────────────────────────────
-  const resetPassword = useCallback(async (newPassword: string, token: string) => {
-    const res = await fetch(`${BETTER_AUTH_BASE}/reset-password`, {
+  // ── Forgot Password (OTP flow) — Step 2: verify OTP + reset password ──────
+  // BetterAuth emailOTP plugin route: POST /email-otp/reset-password
+  const resetPasswordWithOtp = useCallback(async (email: string, otp: string, password: string) => {
+    const res = await fetch(`${BETTER_AUTH_BASE}/email-otp/reset-password`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       credentials: 'include',
-      body: JSON.stringify({ newPassword, token }),
+      body: JSON.stringify({ email, otp, password }),
     });
     if (!res.ok) {
       const data = await res.json().catch(() => ({})) as { message?: string };
-      throw new Error(data.message ?? 'Failed to reset password. Please try again.');
+      const raw = data.message ?? '';
+      if (raw.toLowerCase().includes('invalid') || raw.toLowerCase().includes('expired'))
+        throw new Error('Invalid or expired code. Please request a new one.');
+      throw new Error(sanitizeError(raw, 'Failed to reset password. Please try again.'));
     }
   }, []);
+
+  // ── Reset Password (OTP-based — only active flow) ──────────────────────
+  // Link-based reset-password flow removed: /reset-password page no longer exists.
+  // The OTP flow (sendForgotPasswordOtp + resetPasswordWithOtp) is the sole path.
 
   // ── Logout ─────────────────────────────────────────────────────────────────
   const logout = useCallback(async () => {
@@ -186,8 +209,8 @@ export function useAuth() {
     register,
     loginWithGoogle,
     loginWithGitHub,
-    sendPasswordResetEmail,
-    resetPassword,
+    sendForgotPasswordOtp,
+    resetPasswordWithOtp,
     logout,
     logoutWithTransition,
   };

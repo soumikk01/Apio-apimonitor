@@ -1,0 +1,127 @@
+// ══════════════════════════════════════════════
+//  ApioTypeWriter — Stripe-style typewriter
+//  Designed for the dark right/left pane
+// ══════════════════════════════════════════════
+
+// ── Root container ─────────────────────────────
+.root {
+  position: absolute;
+  inset: 0;
+  z-index: 15;
+  pointer-events: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+// ── Dashed SVG arrow ───────────────────────────
+.arrowWrap {
+  position: absolute;
+  // positioned so the arrow tip points toward the text block
+  top: 14%;
+  left: 8%;
+  width: 42%;
+  max-width: 320px;
+  opacity: 0.75;
+  animation: arrowFloat 6s ease-in-out infinite;
+}
+
+@keyframes arrowFloat {
+  0%, 100% { transform: translateY(0px) rotate(0deg); }
+  50%       { transform: translateY(-8px) rotate(1.5deg); }
+}
+
+// ── Text block ─────────────────────────────────
+.textWrap {
+  position: absolute;
+  // Sit in the lower-center of the pane, clear of the copy text
+  bottom: 18%;
+  left: 0;
+  right: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  padding: 0 2rem;
+}
+
+// ── Main query line ─────────────────────────────
+.line {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 0;
+  font-family: 'JetBrains Mono', 'Fira Code', 'Courier New', monospace;
+  font-size: 0.78rem;
+  line-height: 1.4;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.85);
+  text-shadow: 0 0 18px rgba(99, 179, 237, 0.3);
+  margin: 0;
+}
+
+// ── ■ square prefix dot ─────────────────────────
+.squareDot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  background: rgba(255, 255, 255, 0.9);
+  flex-shrink: 0;
+  margin-right: 6px;
+  position: relative;
+  top: 1px;
+  box-shadow: 0 0 8px rgba(99, 179, 237, 0.6);
+}
+
+// ── "Query:" label ──────────────────────────────
+.prefix {
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: rgba(99, 179, 237, 0.9);   // ← Apio blue accent
+  margin-right: 4px;
+}
+
+// ── The phrase container ────────────────────────
+.phrase {
+  display: inline;
+}
+
+// ── Per-character wrapper ───────────────────────
+.charOuter {
+  position: relative;
+  display: inline-block;
+  // keeps cursor blocks from affecting layout
+  white-space: pre;
+}
+
+.charInner {
+  display: inline-block;
+}
+
+// ── Cursor block (flashes then vanishes) ─────────
+.cursorBlock {
+  position: absolute;
+  top: 1px;
+  left: 0;
+  right: 0;
+  bottom: 1px;
+  background: rgba(255, 255, 255, 0.88);
+  pointer-events: none;
+  border-radius: 1px;
+}
+
+// ── Sub-label beneath the query ─────────────────
+.subLabel {
+  font-family: 'Inter', sans-serif;
+  font-size: 0.72rem;
+  font-weight: 400;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.28);
+  margin: 0;
+  text-align: center;
+}

@@ -48,6 +48,13 @@ export interface RecentCall {
   createdAt: string;
 }
 
+/** Paginated response envelope for /calls endpoint */
+export interface RecentCallsPage {
+  data: RecentCall[];
+  nextCursor: string | null;
+  hasMore: boolean;
+}
+
 export interface Member {
   user: { id: string; email: string; name: string | null };
   role: string;
@@ -62,7 +69,9 @@ export const queryKeys = {
     list: () => [...queryKeys.projects.all, 'list'] as const,
     detail: (id: string) => [...queryKeys.projects.all, 'detail', id] as const,
     stats: (id: string) => [...queryKeys.projects.all, 'stats', id] as const,
-    calls: (id: string, limit?: number) => [...queryKeys.projects.all, 'calls', id, limit] as const,
+    // cursor scopes the cache key so each page is cached independently
+    calls: (id: string, limit?: number, cursor?: string) =>
+      [...queryKeys.projects.all, 'calls', id, limit, cursor] as const,
     members: (id: string) => [...queryKeys.projects.all, 'members', id] as const,
   },
   services: {
@@ -141,11 +150,32 @@ export async function fetchProjectStats(projectId: string): Promise<ProjectStats
   return res.json() as Promise<ProjectStats>;
 }
 
-/** Fetch recent API calls */
+/**
+ * Fetch recent API calls — first page (no cursor).
+ * Returns a flat RecentCall[] for backward-compatible use in live feed components.
+ */
 export async function fetchRecentCalls(projectId: string, limit = 50): Promise<RecentCall[]> {
   const res = await fetchWithAuth(`${API}/projects/${projectId}/calls?limit=${limit}`);
   if (!res.ok) throw new Error(`Failed to load calls (${res.status})`);
-  return res.json() as Promise<RecentCall[]>;
+  const page = await res.json() as RecentCallsPage;
+  // Extract .data from the paginated envelope — callers receive RecentCall[] unchanged
+  return page.data;
+}
+
+/**
+ * Fetch a specific cursor page of API calls.
+ * Use for infinite-scroll / "Load more" in the History & Logs pages.
+ */
+export async function fetchRecentCallsCursor(
+  projectId: string,
+  limit = 50,
+  cursor?: string,
+): Promise<RecentCallsPage> {
+  const params = new URLSearchParams({ limit: String(limit) });
+  if (cursor) params.set('cursor', cursor);
+  const res = await fetchWithAuth(`${API}/projects/${projectId}/calls?${params.toString()}`);
+  if (!res.ok) throw new Error(`Failed to load calls (${res.status})`);
+  return res.json() as Promise<RecentCallsPage>;
 }
 
 /** Fetch project members list */

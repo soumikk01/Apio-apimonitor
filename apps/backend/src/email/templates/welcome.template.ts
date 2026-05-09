@@ -12,8 +12,8 @@ export function welcomeTemplate(name: string, dashUrl: string): string {
     <table role="presentation" width="100%" cellpadding="0" cellspacing="0"
            border="0" style="margin-bottom:24px;">
       ${row('📡', 'Real-time monitoring', 'Track every API request as it happens.')}
-      ${row('🔔', 'Instant alerts',       'Get notified the moment something breaks.')}
-      ${row('📊', 'Analytics',            'Understand trends across all your endpoints.')}
+      ${row('🔔', 'Instant alerts', 'Get notified the moment something breaks.')}
+      ${row('📊', 'Analytics', 'Understand trends across all your endpoints.')}
     </table>
 
     ${divider()}
@@ -21,7 +21,7 @@ export function welcomeTemplate(name: string, dashUrl: string): string {
 
     ${footerNote(
       'Questions? Reply to this email or visit ' +
-      '<a href="https://apio.one" style="color:#6366f1;text-decoration:none;">apio.one</a>.'
+        '<a href="https://apio.one" style="color:#6366f1;text-decoration:none;">apio.one</a>.',
     )}
   `;
   return baseTemplate(content);
