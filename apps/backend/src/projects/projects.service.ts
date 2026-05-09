@@ -194,9 +194,13 @@ export class ProjectsService {
     const result = {
       total,
       errors,
-      errorRate:   total > 0 ? parseFloat(((errors / total) * 100).toFixed(1)) : 0,
-      avgLatency:  Math.round(latencyAgg._avg.latency ?? 0),
-      successRate: total > 0 ? parseFloat((((total - errors) / total) * 100).toFixed(1)) : 100,
+      errorRate:
+        total > 0 ? parseFloat(((errors / total) * 100).toFixed(1)) : 0,
+      avgLatency: Math.round(latencyAgg._avg.latency ?? 0),
+      successRate:
+        total > 0
+          ? parseFloat((((total - errors) / total) * 100).toFixed(1))
+          : 100,
       activeInstances: recentCount > 0 ? 1 : 0,
     };
 
@@ -246,7 +250,7 @@ export class ProjectsService {
     });
 
     const hasMore = rows.length > limit;
-    const data    = hasMore ? rows.slice(0, limit) : rows;
+    const data = hasMore ? rows.slice(0, limit) : rows;
     const nextCursor = hasMore ? data[data.length - 1].id : null;
 
     const result = { data, nextCursor, hasMore };

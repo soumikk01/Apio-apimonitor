@@ -30,22 +30,32 @@ const passwordBcrypt = {
 // BetterAuth 1.6.9 generates random base-62 string IDs (e.g. "mUA9wWo4...").
 // MongoDB/Prisma requires 24-char hex ObjectIds (P2023). This Proxy silently
 // converts any non-ObjectId string ID to a valid ObjectId on every .create().
-function fixIdOnCreate(model: Record<string, unknown>): Record<string, unknown> {
+function fixIdOnCreate(
+  model: Record<string, unknown>,
+): Record<string, unknown> {
   return new Proxy(model, {
     get(target, prop) {
       if (prop === 'create') {
         return async (args: Record<string, unknown>) => {
           const data = args?.data as Record<string, unknown> | undefined;
-          if (data?.id && typeof data.id === 'string' && !OBJECT_ID_RE.test(data.id)) {
+          if (
+            data?.id &&
+            typeof data.id === 'string' &&
+            !OBJECT_ID_RE.test(data.id)
+          ) {
             const newId = randomBytes(12).toString('hex');
             data.id = newId;
           }
-          return (target.create as (args: Record<string, unknown>) => unknown)(args);
+          return (target.create as (args: Record<string, unknown>) => unknown)(
+            args,
+          );
         };
       }
       // Bind all other methods so Prisma internals keep correct 'this'
       const val = (target as Record<string, unknown>)[prop as string];
-      return typeof val === 'function' ? (val as (...args: unknown[]) => unknown).bind(target) : val;
+      return typeof val === 'function'
+        ? (val as (...args: unknown[]) => unknown).bind(target)
+        : val;
     },
   });
 }
@@ -56,10 +66,18 @@ const _rawPrisma = new PrismaClient();
 const prisma = new Proxy(_rawPrisma, {
   get(target, prop: string) {
     const value = (target as unknown as Record<string, unknown>)[prop];
-    if (['user', 'session', 'account', 'verification', 'twoFactor'].includes(prop) && typeof value === 'object' && value !== null) {
+    if (
+      ['user', 'session', 'account', 'verification', 'twoFactor'].includes(
+        prop,
+      ) &&
+      typeof value === 'object' &&
+      value !== null
+    ) {
       return fixIdOnCreate(value as Record<string, unknown>);
     }
-    return typeof value === 'function' ? (value as (...args: unknown[]) => unknown).bind(target) : value;
+    return typeof value === 'function'
+      ? (value as (...args: unknown[]) => unknown).bind(target)
+      : value;
   },
 }) as PrismaClient;
 
@@ -80,12 +98,20 @@ const smtpTransporter =
       })
     : null;
 
-async function sendMail(to: string, subject: string, html: string): Promise<void> {
+async function sendMail(
+  to: string,
+  subject: string,
+  html: string,
+): Promise<void> {
   if (!smtpTransporter) {
-    console.warn(`[BetterAuth] ⚠ Email not sent to ${to} — SMTP_USER/SMTP_PASS not configured.`);
+    console.warn(
+      `[BetterAuth] ⚠ Email not sent to ${to} — SMTP_USER/SMTP_PASS not configured.`,
+    );
     return;
   }
-  console.log(`[BetterAuth] 📧 Attempting to send "${subject}" to ${to} via ${_smtpHost}:${_smtpPort}`);
+  console.log(
+    `[BetterAuth] 📧 Attempting to send "${subject}" to ${to} via ${_smtpHost}:${_smtpPort}`,
+  );
   try {
     const info = await smtpTransporter.sendMail({
       from: FROM_EMAIL,
@@ -93,7 +119,9 @@ async function sendMail(to: string, subject: string, html: string): Promise<void
       subject,
       html,
     });
-    console.log(`[BetterAuth] ✅ Email sent to ${to} — messageId: ${info.messageId}`);
+    console.log(
+      `[BetterAuth] ✅ Email sent to ${to} — messageId: ${info.messageId}`,
+    );
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error(`[BetterAuth] ❌ Failed to send email to ${to}: ${msg}`);
@@ -107,7 +135,7 @@ const FROM_EMAIL = process.env.EMAIL_FROM ?? _smtpUser ?? 'noreply@apio.one';
 const APP_URL = process.env.BETTER_AUTH_URL ?? 'http://localhost:4000';
 
 // ── BetterAuth instance ───────────────────────────────────────────────────────
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
+
 const _auth: any = betterAuth({
   // Base URL of THIS server (the NestJS backend)
   baseURL: APP_URL,
@@ -121,15 +149,14 @@ const _auth: any = betterAuth({
   // Limits all auth endpoints to 5 requests per 15 minutes per IP.
   // This prevents brute-forcing the 6-digit OTP (10^6 combos → blocked after 5 attempts).
   rateLimit: {
-    window: 15 * 60,  // 15 minutes (seconds)
-    max: 5,           // max 5 requests per window per IP on sensitive endpoints
+    window: 15 * 60, // 15 minutes (seconds)
+    max: 5, // max 5 requests per window per IP on sensitive endpoints
     storage: 'memory',
   },
 
   // Where BetterAuth sends users after clicking the email verification link
   // Points to apps/auth verify-email page which handles the token
-  emailVerificationCallbackURL:
-    `${process.env.AUTH_URL ?? 'http://localhost:3001'}/verify-email`,
+  emailVerificationCallbackURL: `${process.env.AUTH_URL ?? 'http://localhost:3001'}/verify-email`,
 
   // ── Database ─────────────────────────────────────────────────────────────
   database: prismaAdapter(prisma, {
@@ -155,8 +182,16 @@ const _auth: any = betterAuth({
   emailVerification: {
     sendOnSignUp: true,
     autoSignInAfterVerification: true,
-    sendVerificationEmail: async ({ user, url }: { user: { email: string }; url: string }) => {
-      console.log(`[BetterAuth] 🔐 sendVerificationEmail triggered for ${user.email}`);
+    sendVerificationEmail: async ({
+      user,
+      url,
+    }: {
+      user: { email: string };
+      url: string;
+    }) => {
+      console.log(
+        `[BetterAuth] 🔐 sendVerificationEmail triggered for ${user.email}`,
+      );
       console.log(`[BetterAuth] 🔗 Verification URL: ${url}`);
       await sendMail(
         user.email,
@@ -165,7 +200,6 @@ const _auth: any = betterAuth({
       );
     },
   },
-
 
   // ── Social Providers ─────────────────────────────────────────────────────
   // Providers are only registered when both client credentials are present.
@@ -200,19 +234,23 @@ const _auth: any = betterAuth({
     emailOTP({
       async sendVerificationOTP({ email, otp, type }) {
         const subjects: Record<OtpType, string> = {
-          'sign-in':            'Your Apio sign-in code',
+          'sign-in': 'Your Apio sign-in code',
           'email-verification': 'Verify your Apio account',
-          'forget-password':    'Your Apio password reset code',
+          'forget-password': 'Your Apio password reset code',
         };
-        await sendMail(email, subjects[type] ?? 'Your Apio code', otpTemplate(otp, type as OtpType));
+        await sendMail(
+          email,
+          subjects[type] ?? 'Your Apio code',
+          otpTemplate(otp, type as OtpType),
+        );
       },
     }),
   ],
 
   // ── Session config ────────────────────────────────────────────────────────
   session: {
-    expiresIn: 60 * 60 * 24 * 30,   // 30 days
-    updateAge: 60 * 60 * 24,         // refresh session if older than 1 day
+    expiresIn: 60 * 60 * 24 * 30, // 30 days
+    updateAge: 60 * 60 * 24, // refresh session if older than 1 day
     cookieCache: {
       enabled: true,
       maxAge: 5 * 60, // 5-minute client-side cookie cache
@@ -251,7 +289,6 @@ const _auth: any = betterAuth({
   secret: process.env.BETTER_AUTH_SECRET,
 });
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 export const auth: any = _auth;
 
 export type Auth = typeof _auth;

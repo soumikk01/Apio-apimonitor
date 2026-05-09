@@ -105,7 +105,9 @@ export class BetterAuthController {
     const body = await fetchRes.text();
     // Log non-2xx responses for debugging
     if (fetchRes.status >= 400) {
-      console.error(`[BetterAuth] ${req.method} ${req.originalUrl} → ${fetchRes.status}: ${body || '(empty body)'}`);
+      console.error(
+        `[BetterAuth] ${req.method} ${req.originalUrl} → ${fetchRes.status}: ${body || '(empty body)'}`,
+      );
     }
     res.send(body);
   }

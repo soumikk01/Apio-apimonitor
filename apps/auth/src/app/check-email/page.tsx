@@ -18,6 +18,7 @@ function FadeDigit({ value, color }: { value: string; color: string }) {
 
   useEffect(() => {
     if (value === current) return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setPrev(current);
     setAnimating(true);
     setCurrent(value);

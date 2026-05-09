@@ -23,7 +23,7 @@ export class EmailService {
       this.transporter = nodemailer.createTransport({
         host,
         port,
-        secure: port === 465,   // true for 465 (SSL), false for 587 (STARTTLS)
+        secure: port === 465, // true for 465 (SSL), false for 587 (STARTTLS)
         auth: { user, pass },
       });
       this.enabled = true;
@@ -41,24 +41,25 @@ export class EmailService {
   // ── Internal send helper ────────────────────────────────────────────────────
   private async send(to: string, subject: string, html: string): Promise<void> {
     if (!this.enabled || !this.transporter) return;
-    const info = await this.transporter.sendMail({ from: this.from, to, subject, html });
+    const info = await this.transporter.sendMail({
+      from: this.from,
+      to,
+      subject,
+      html,
+    });
     this.logger.log(`Email sent to ${to} → messageId: ${info.messageId}`);
   }
 
   // ── OTP / Verification Code ────────────────────────────────────────────────
-  async sendOtp(
-    to: string,
-    otp: string,
-    type: OtpType,
-  ): Promise<void> {
+  async sendOtp(to: string, otp: string, type: OtpType): Promise<void> {
     if (!this.enabled) {
       this.logger.debug(`[email disabled] would send OTP (${type}) to ${to}`);
       return;
     }
     const subjects: Record<OtpType, string> = {
-      'sign-in':            `Your ${this.appName} sign-in code`,
+      'sign-in': `Your ${this.appName} sign-in code`,
       'email-verification': `Verify your ${this.appName} account`,
-      'forget-password':    `Your ${this.appName} password reset code`,
+      'forget-password': `Your ${this.appName} password reset code`,
     };
     try {
       await this.send(to, subjects[type], otpTemplate(otp, type));
@@ -74,12 +75,19 @@ export class EmailService {
       this.logger.debug(`[email disabled] would send welcome email to ${to}`);
       return;
     }
-    const dashUrl = this.config.get('FRONTEND_URL', 'https://apio.one') + '/projects';
+    const dashUrl =
+      this.config.get('FRONTEND_URL', 'https://apio.one') + '/projects';
     try {
-      await this.send(to, `Welcome to ${this.appName}! 🎉`, welcomeTemplate(name, dashUrl));
+      await this.send(
+        to,
+        `Welcome to ${this.appName}! 🎉`,
+        welcomeTemplate(name, dashUrl),
+      );
     } catch (err) {
       // Welcome email is non-critical — log but don't throw
-      this.logger.warn(`Failed to send welcome email to ${to}: ${(err as Error).message}`);
+      this.logger.warn(
+        `Failed to send welcome email to ${to}: ${(err as Error).message}`,
+      );
     }
   }
 }

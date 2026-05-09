@@ -3,20 +3,33 @@ import { baseTemplate, footerNote } from './base.template';
 export type OtpType = 'sign-in' | 'email-verification' | 'forget-password';
 
 const OTP_COPY: Record<OtpType, { heading: string; sub: string }> = {
-  'sign-in':            { heading: 'Your Sign-in verification Code',  sub: 'Use this code to complete your sign-in.' },
-  'email-verification': { heading: 'Your Signup verification Code',   sub: 'Use this code to verify your Apio account.' },
-  'forget-password':    { heading: 'Your Password Reset Code',        sub: 'Use this code to reset your password.' },
+  'sign-in': {
+    heading: 'Your Sign-in verification Code',
+    sub: 'Use this code to complete your sign-in.',
+  },
+  'email-verification': {
+    heading: 'Your Signup verification Code',
+    sub: 'Use this code to verify your Apio account.',
+  },
+  'forget-password': {
+    heading: 'Your Password Reset Code',
+    sub: 'Use this code to reset your password.',
+  },
 };
 
 export function otpTemplate(otp: string, type: OtpType): string {
   const { heading, sub } = OTP_COPY[type];
 
   // Split OTP into individual digits for the spaced display
-  const digits = otp.split('').map(d =>
-    `<td style="padding:0 6px;">
+  const digits = otp
+    .split('')
+    .map(
+      (d) =>
+        `<td style="padding:0 6px;">
        <span style="font-size:32px;font-weight:700;color:#1e1b4b;letter-spacing:0;">${d}</span>
-     </td>`
-  ).join('');
+     </td>`,
+    )
+    .join('');
 
   const content = `
     <!-- Heading -->

@@ -38,6 +38,7 @@ export default function LoginPage() {
   useEffect(() => {
     const saved = localStorage.getItem('apio_last_email') ?? '';
     if (saved) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setEmail(saved);
       setLastUsedEmail(saved);
     }

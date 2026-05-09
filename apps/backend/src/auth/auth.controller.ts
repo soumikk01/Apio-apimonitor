@@ -141,7 +141,9 @@ export class AuthController {
    */
   @SkipThrottle()
   @Get('session-token')
-  async sessionToken(@Req() req: { headers: Record<string, string | string[] | undefined> }) {
+  async sessionToken(
+    @Req() req: { headers: Record<string, string | string[] | undefined> },
+  ) {
     // Convert Express request headers to the format BetterAuth expects
     const headers = new Headers();
     Object.entries(req.headers).forEach(([k, v]) => {
@@ -149,7 +151,8 @@ export class AuthController {
     });
 
     const session = await auth.api.getSession({ headers });
-    if (!session?.user?.email) throw new UnauthorizedException('No active session');
+    if (!session?.user?.email)
+      throw new UnauthorizedException('No active session');
 
     return this.authService.sessionToken(session.user.email);
   }

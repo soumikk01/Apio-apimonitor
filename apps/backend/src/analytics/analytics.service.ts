@@ -62,9 +62,9 @@ export class AnalyticsService {
 
     const result = {
       total,
-      errorRate:   total > 0 ? Math.round((errors / total) * 100) : 0,
+      errorRate: total > 0 ? Math.round((errors / total) * 100) : 0,
       successRate: total > 0 ? Math.round(((total - errors) / total) * 100) : 0,
-      avgLatency:  Math.round(latencyAgg._avg.latency ?? 0),
+      avgLatency: Math.round(latencyAgg._avg.latency ?? 0),
       range,
     };
 

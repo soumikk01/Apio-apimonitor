@@ -59,6 +59,7 @@ const GooeyButton = ({ children, className = '', wrapperClassName = '', isLoadin
 
     // ── Reset hover on every mount (fixes reused-instance bug after client-side navigation) ──
     useEffect(() => {
+        // eslint-disable-next-line react-hooks/set-state-in-effect
         setIsHovered(false);
     }, []);
 
