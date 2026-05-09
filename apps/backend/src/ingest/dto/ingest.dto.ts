@@ -62,7 +62,7 @@ export class IngestDto {
   sdkToken!: string; // Identifies the service (and its project/user) — no projectId needed
 
   @IsArray()
-  @ArrayMaxSize(500)  // Prevent BullMQ flood — max 500 events per request
+  @ArrayMaxSize(500) // Prevent BullMQ flood — max 500 events per request
   @ValidateNested({ each: true })
   @Type(() => ApiCallEventDto)
   events!: ApiCallEventDto[];

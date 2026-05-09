@@ -9,6 +9,14 @@ $white-glass: rgba(255, 255, 255, 0.72);
 $pill:   100px;
 $r-lg:   24px;
 
+:global {
+  @keyframes spin {
+    from { transform: rotate(0deg); }
+    to   { transform: rotate(360deg); }
+  }
+}
+
+
 // ══════════════════════════════════════════════
 //  PAGE & BACKGROUND
 // ══════════════════════════════════════════════
@@ -26,6 +34,64 @@ $r-lg:   24px;
   display: flex;
   width: 100%;
   min-height: 100vh;
+  position: relative;
+}
+
+// ══════════════════════════════════════════════
+//  SPLIT BACK BUTTON — straddles left/right pane
+// ══════════════════════════════════════════════
+.splitBackBtn {
+  position: absolute;
+  top: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 200;
+
+  // RegisterPage is mirrored: left = pattern pane (#E2DBD0), right = form pane ($bg-top)
+  background: linear-gradient(
+    to right,
+    #E2DBD0 50%,
+    $bg-top 50%
+  );
+
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  border: 1.5px solid rgba(255, 255, 255, 0.55);
+  box-shadow:
+    0 4px 20px rgba(0, 0, 0, 0.12),
+    0 1px 4px rgba(0, 0, 0, 0.08);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: $text-main;
+  text-decoration: none;
+  cursor: pointer;
+  transition: transform 0.22s cubic-bezier(0.34, 1.56, 0.64, 1), box-shadow 0.2s ease;
+
+  &:hover {
+    transform: translateX(-50%) scale(1.1);
+    box-shadow:
+      0 8px 28px rgba(0, 0, 0, 0.18),
+      0 2px 6px rgba(0, 0, 0, 0.1);
+  }
+
+  &:active {
+    transform: translateX(-50%) scale(0.96);
+  }
+
+  svg {
+    flex-shrink: 0;
+    filter: drop-shadow(0 1px 1px rgba(0,0,0,0.15));
+  }
+
+  @media (max-width: 900px) {
+    background: $bg-top;
+    left: 20px;
+    transform: none;
+    &:hover { transform: scale(1.08); }
+    &:active { transform: scale(0.95); }
+  }
 }
 
 .leftPane {
@@ -339,6 +405,12 @@ $r-lg:   24px;
   color: #ef4444 !important;
 }
 
+.inputSuccess {
+  border-color: #22c55e !important;
+  background: rgba(34, 197, 94, 0.04) !important;
+  box-shadow: 0 0 0 3px rgba(34, 197, 94, 0.10) !important;
+}
+
 .errorBanner {
   display: flex;
   align-items: flex-start;
@@ -518,6 +590,31 @@ $dm-glass:  rgba(22, 22, 28, 0.82);
   .leftPane { background-color: #121217; border-right: none; }
   .rightPane { background: transparent; }
   .patternOverlay { opacity: 0.15; filter: grayscale(1) invert(1); mix-blend-mode: normal; }
+
+  .splitBackBtn {
+    background: linear-gradient(
+      to right,
+      #121217 50%,
+      #0E0E12 50%
+    );
+    border-color: rgba(255, 255, 255, 0.1);
+    color: $dm-text;
+    box-shadow:
+      0 4px 20px rgba(0, 0, 0, 0.45),
+      0 1px 4px rgba(0, 0, 0, 0.3);
+
+    &:hover {
+      box-shadow:
+        0 8px 28px rgba(0, 0, 0, 0.6),
+        0 2px 6px rgba(0, 0, 0, 0.35);
+    }
+
+    svg { filter: drop-shadow(0 1px 2px rgba(0,0,0,0.5)); }
+
+    @media (max-width: 900px) {
+      background: #0E0E12;
+    }
+  }
 
   .springBg { opacity: 0.2; }
 

@@ -6,6 +6,7 @@ import {
   HttpCode,
   HttpStatus,
   Req,
+  Query,
   UnauthorizedException,
 } from '@nestjs/common';
 
@@ -14,10 +15,66 @@ import { AuthService } from './auth.service';
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
 import { auth } from './better-auth';
+import { validateEmail } from './email-validator';
+import { PrismaService } from '../prisma/prisma.service';
 
 @Controller('auth')
 export class AuthController {
-  constructor(private authService: AuthService) {}
+  constructor(
+    private authService: AuthService,
+    private prisma: PrismaService,
+  ) {}
+
+  /**
+   * GET /auth/check-email?email=user@example.com
+   * Validates email format + disposable domain blocklist + DNS MX lookup.
+   * Used by the registration form for real-time feedback.
+   * Rate-limited: 10 requests per 60 seconds per IP.
+   */
+  @Throttle({
+    short: { ttl: 60_000, limit: 10 },
+    medium: { ttl: 60_000, limit: 10 },
+  })
+  @Get('check-email')
+  async checkEmail(@Query('email') email: string) {
+    return validateEmail(email ?? '');
+  }
+
+  /**
+   * POST /auth/verify-otp
+   * Checks if a forget-password OTP is valid WITHOUT consuming it.
+   * The actual OTP consumption happens in the final reset step.
+   * Rate-limited: 5 per 60 seconds per IP.
+   */
+  @Throttle({
+    short: { ttl: 60_000, limit: 5 },
+    medium: { ttl: 60_000, limit: 5 },
+  })
+  @Post('verify-otp')
+  @HttpCode(HttpStatus.OK)
+  async verifyOtp(@Body() body: { email: string; otp: string }) {
+    const { email, otp } = body;
+    if (!email || !otp || otp.length !== 6) return { valid: false };
+
+    // BetterAuth emailOTP stores verification records with:
+    //   identifier = `forget-password-otp-${email}`
+    //   value      = `${plainOtp}:${attemptCount}`  (e.g. "483921:0")
+    const identifier = `forget-password-otp-${email.trim().toLowerCase()}`;
+    const record = await this.prisma.verification.findFirst({
+      where: {
+        identifier,
+        expiresAt: { gt: new Date() },
+      },
+    });
+    if (!record) return { valid: false };
+
+    // Strip the trailing ":N" attempt counter before comparing
+    const storedOtp = record.value.includes(':')
+      ? record.value.slice(0, record.value.lastIndexOf(':'))
+      : record.value;
+
+    return { valid: storedOtp === otp };
+  }
 
   /**
    * POST /auth/register
@@ -84,7 +141,9 @@ export class AuthController {
    */
   @SkipThrottle()
   @Get('session-token')
-  async sessionToken(@Req() req: { headers: Record<string, string | string[] | undefined> }) {
+  async sessionToken(
+    @Req() req: { headers: Record<string, string | string[] | undefined> },
+  ) {
     // Convert Express request headers to the format BetterAuth expects
     const headers = new Headers();
     Object.entries(req.headers).forEach(([k, v]) => {
@@ -92,7 +151,8 @@ export class AuthController {
     });
 
     const session = await auth.api.getSession({ headers });
-    if (!session?.user?.email) throw new UnauthorizedException('No active session');
+    if (!session?.user?.email)
+      throw new UnauthorizedException('No active session');
 
     return this.authService.sessionToken(session.user.email);
   }

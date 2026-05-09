@@ -5,28 +5,59 @@ import { promises as dns } from 'dns';
 // Add more as you discover them.
 const DISPOSABLE_DOMAINS = new Set([
   // ── Mailinator family ──
-  'mailinator.com', 'trashmail.com', 'guerrillamail.com', 'guerrillamail.net',
-  'guerrillamail.org', 'guerrillamail.biz', 'guerrillamail.de', 'guerrillamail.info',
+  'mailinator.com',
+  'trashmail.com',
+  'guerrillamail.com',
+  'guerrillamail.net',
+  'guerrillamail.org',
+  'guerrillamail.biz',
+  'guerrillamail.de',
+  'guerrillamail.info',
   // ── Temp-mail family ──
-  'temp-mail.org', 'tempmail.com', 'tempmail.net', 'temp-mail.io',
-  'tempr.email', 'tempinbox.com', 'tempmailaddress.com',
+  'temp-mail.org',
+  'tempmail.com',
+  'tempmail.net',
+  'temp-mail.io',
+  'tempr.email',
+  'tempinbox.com',
+  'tempmailaddress.com',
   // ── 10-minute mail ──
-  '10minutemail.com', '10minutemail.net', '10minutemail.org', '10minutemail.de',
-  '10minutemail.co.uk', '10minemail.com',
+  '10minutemail.com',
+  '10minutemail.net',
+  '10minutemail.org',
+  '10minutemail.de',
+  '10minutemail.co.uk',
+  '10minemail.com',
   // ── YOPmail ──
-  'yopmail.com', 'yopmail.fr', 'yopmail.net',
+  'yopmail.com',
+  'yopmail.fr',
+  'yopmail.net',
   // ── Throw Away Mail ──
-  'throwam.com', 'throwam.net', 'throwaway.email',
+  'throwam.com',
+  'throwam.net',
+  'throwaway.email',
   // ── Fake / Invalid ──
-  'fakeinbox.com', 'fakemailgenerator.com', 'fakemail.net',
-  'mailnull.com', 'mailnesia.com', 'mailnull.com',
+  'fakeinbox.com',
+  'fakemailgenerator.com',
+  'fakemail.net',
+  'mailnull.com',
+  'mailnesia.com',
+  'mailnull.com',
   // ── Sharklasers / Guerrilla ──
-  'sharklasers.com', 'grr.la', 'guerrillamailblock.com',
-  'spam4.me', 'spamgourmet.com', 'spamgourmet.net', 'spamgourmet.org',
+  'sharklasers.com',
+  'grr.la',
+  'guerrillamailblock.com',
+  'spam4.me',
+  'spamgourmet.com',
+  'spamgourmet.net',
+  'spamgourmet.org',
   // ── Discard.email ──
-  'discard.email', 'discardmail.com', 'discardmail.de',
+  'discard.email',
+  'discardmail.com',
+  'discardmail.de',
   // ── Spamex ──
-  'spam.la', 'spamex.com',
+  'spam.la',
+  'spamex.com',
   // ── GishPuppy ──
   'gishpuppy.com',
   // ── Mailexpire ──
@@ -36,29 +67,64 @@ const DISPOSABLE_DOMAINS = new Set([
   // ── Getairmail ──
   'getairmail.com',
   // ── Jetable ──
-  'jetable.fr.nf', 'jetable.net', 'jetable.org',
+  'jetable.fr.nf',
+  'jetable.net',
+  'jetable.org',
   // ── Nwldx ──
   'nwldx.com',
   // ── Trashmail ──
-  'trashmail.at', 'trashmail.io', 'trashmail.me', 'trashmail.net', 'trashmail.xyz',
+  'trashmail.at',
+  'trashmail.io',
+  'trashmail.me',
+  'trashmail.net',
+  'trashmail.xyz',
   // ── Maildrop ──
   'maildrop.cc',
   // ── Anonaddy ──
-  'anonaddy.com', 'anonaddy.me',
+  'anonaddy.com',
+  'anonaddy.me',
   // ── Cock.li ──
-  'cock.li', 'airmail.cc', 'cumallover.me', 'dicksinhisan.us',
-  'tfwno.gf', 'waifu.club',
+  'cock.li',
+  'airmail.cc',
+  'cumallover.me',
+  'dicksinhisan.us',
+  'tfwno.gf',
+  'waifu.club',
   // ── Others ──
-  'mailnull.com', 'spamfree24.org', 'mytrashmail.com',
-  'spaml.de', 'spaml.com', 'mt2015.com', 'mt2009.com',
-  'courriel.fr.nf', 'trash-mail.at', 'trashdevil.com',
-  'inoutmail.de', 'inoutmail.eu', 'inoutmail.info', 'inoutmail.net',
-  'einrot.com', 'chogmail.com', 'mail-filter.com',
-  'objectmail.com', 'rejectmail.com', 'opayq.com',
-  'shortmail.net', 'vomoto.com', 'iroid.com',
-  'boximail.com', 'clrmail.com', 'fromru.com',
-  'binkmail.com', 'boxformail.in', 'nomail.pw',
-  'throwam.com', 'crapmail.org', 'wegwerfmail.de', 'wegwerfmail.net', 'wegwerfmail.org',
+  'mailnull.com',
+  'spamfree24.org',
+  'mytrashmail.com',
+  'spaml.de',
+  'spaml.com',
+  'mt2015.com',
+  'mt2009.com',
+  'courriel.fr.nf',
+  'trash-mail.at',
+  'trashdevil.com',
+  'inoutmail.de',
+  'inoutmail.eu',
+  'inoutmail.info',
+  'inoutmail.net',
+  'einrot.com',
+  'chogmail.com',
+  'mail-filter.com',
+  'objectmail.com',
+  'rejectmail.com',
+  'opayq.com',
+  'shortmail.net',
+  'vomoto.com',
+  'iroid.com',
+  'boximail.com',
+  'clrmail.com',
+  'fromru.com',
+  'binkmail.com',
+  'boxformail.in',
+  'nomail.pw',
+  'throwam.com',
+  'crapmail.org',
+  'wegwerfmail.de',
+  'wegwerfmail.net',
+  'wegwerfmail.org',
 ]);
 
 // ── Free webmail domains (allowed by default — remove if you want business-only) ──
@@ -77,7 +143,9 @@ export interface EmailValidationResult {
  *  2. Disposable domain blocklist
  *  3. DNS MX record check (confirms domain can receive email)
  */
-export async function validateEmail(email: string): Promise<EmailValidationResult> {
+export async function validateEmail(
+  email: string,
+): Promise<EmailValidationResult> {
   if (!email || typeof email !== 'string') {
     return { valid: false, reason: 'Email is required.' };
   }
@@ -96,7 +164,8 @@ export async function validateEmail(email: string): Promise<EmailValidationResul
   if (DISPOSABLE_DOMAINS.has(domain)) {
     return {
       valid: false,
-      reason: 'Disposable email addresses are not allowed. Please use a real email.',
+      reason:
+        'Disposable email addresses are not allowed. Please use a real email.',
     };
   }
 

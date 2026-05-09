@@ -57,6 +57,12 @@ const GooeyButton = ({ children, className = '', wrapperClassName = '', isLoadin
         };
     }, [displacementScale]);
 
+    // ── Reset hover on every mount (fixes reused-instance bug after client-side navigation) ──
+    useEffect(() => {
+        // eslint-disable-next-line react-hooks/set-state-in-effect
+        setIsHovered(false);
+    }, []);
+
     useEffect(() => {
         let controls: AnimationPlaybackControls | undefined;
         if (isHovered && !isLoading && !props.disabled) {
@@ -140,6 +146,7 @@ const GooeyButton = ({ children, className = '', wrapperClassName = '', isLoadin
                     style={{ filter: `url(#${jelloId})` }}
                     className={`${styles.button} ${isLoading ? styles.loadingBtn : ''} ${className}`}
                     disabled={isLoading || props.disabled}
+                    suppressHydrationWarning
                     {...props}
                 >
                     {icon && !isLoading && !props.disabled ? (

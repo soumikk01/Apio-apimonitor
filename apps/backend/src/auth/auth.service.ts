@@ -62,8 +62,7 @@ export class AuthService {
     });
     if (!user) throw new UnauthorizedException('Invalid credentials');
 
-    if (!user.password)
-      throw new UnauthorizedException('Invalid credentials');
+    if (!user.password) throw new UnauthorizedException('Invalid credentials');
 
     // user.password is guaranteed non-null by the guard above
     const passwordMatch = await bcrypt.compare(dto.password, user.password!);

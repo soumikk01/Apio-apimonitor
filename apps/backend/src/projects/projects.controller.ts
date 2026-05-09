@@ -70,8 +70,10 @@ export class ProjectsController {
   }
 
   /**
-   * GET /projects/:id/calls?limit=50
-   * Seed the live feed on load — browser caches 15s.
+   * GET /projects/:id/calls?limit=50&cursor=<id>
+   * First page: no cursor → seeds the live feed.
+   * Next pages: pass nextCursor from previous response.
+   * Browser caches 15s per page.
    */
   @Get(':id/calls')
   @Header('Cache-Control', 'private, max-age=15, stale-while-revalidate=30')
@@ -79,11 +81,13 @@ export class ProjectsController {
     @Param('id') id: string,
     @Request() req: AuthRequest,
     @Query('limit') limit?: string,
+    @Query('cursor') cursor?: string,
   ) {
     return this.projectsService.getRecentCalls(
       id,
       req.user.userId,
       limit ? parseInt(limit, 10) : 50,
+      cursor,
     );
   }
 
