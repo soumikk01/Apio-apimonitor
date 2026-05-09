@@ -14,6 +14,10 @@
 #    └──────────┬──────────┘
 #               │
 #    ┌──────────▼──────────┐
+#    │  deploy-vps         │  Deploy to VPS via SSH (Docker / PM2)
+#    └──────────┬──────────┘
+#               │
+#    ┌──────────▼──────────┐
 #    │  deploy-vercel      │  Trigger Vercel redeploy (web + auth)
 #    └──────────┬──────────┘
 #               │
@@ -133,6 +137,43 @@ jobs:
             --retry-connrefused \
             "${{ secrets.RAILWAY_PUBLIC_URL }}/health" | jq .
 
+  # ── 2b. Deploy Backend — VPS (SSH) ────────────────────────────────────────────
+  deploy-vps:
+    name: 🖥️ Deploy Backend (VPS)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs: [build-and-publish]
+    # Uncomment and configure the environment if needed
+    # environment: production
+
+    steps:
+      - name: Deploy to VPS
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USERNAME }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          # If your VPS uses a non-standard port, uncomment below:
+          # port: ${{ secrets.VPS_PORT }}
+          
+          # The script to run on the server. Adjust the directory and commands as needed.
+          script: |
+            echo "Deploying to VPS..."
+            
+            # --- Option A: Docker Compose ---
+            # cd /opt/apio-backend
+            # docker compose pull
+            # docker compose up -d
+            
+            # --- Option B: PM2 ---
+            cd /opt/apio-backend
+            git pull origin main
+            bun install
+            bun run build
+            pm2 restart apio-backend
+            
+            echo "Deployment completed successfully!"
+
   # ── 3. Deploy Frontend — Vercel (web + auth) ──────────────────────────────────
   deploy-vercel:
     name: ▲ Deploy Frontend (Vercel)
@@ -175,7 +216,7 @@ jobs:
     name: 🔥 Smoke Test
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    needs: [deploy-railway, deploy-vercel]
+    needs: [deploy-railway, deploy-vps, deploy-vercel]
 
     steps:
       - name: Backend health check
