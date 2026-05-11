@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import { useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { useAuth } from '@/features/auth/hooks/useAuth';
 import ButtonLogoSpinner from '@/components/ButtonLogoSpinner/ButtonLogoSpinner';
@@ -27,6 +28,10 @@ export default function LoginPage() {
 
   const { login, loginWithGoogle, loginWithGitHub } = useAuth();
 
+  const searchParams = useSearchParams();
+  const isVerified = searchParams.get('verified') === 'true';
+  const verifiedEmail = searchParams.get('email') ?? '';
+
   // ── Hydration-safe: always start empty on server, populate after mount ──
   const [email, setEmail] = useState('');
   const [lastUsedEmail, setLastUsedEmail] = useState('');
@@ -36,13 +41,19 @@ export default function LoginPage() {
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   useEffect(() => {
+    // If coming from email verification, pre-fill the verified email
+    if (verifiedEmail) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setEmail(verifiedEmail);
+      return;
+    }
     const saved = localStorage.getItem('apio_last_email') ?? '';
     if (saved) {
       // eslint-disable-next-line react-hooks/set-state-in-effect
       setEmail(saved);
       setLastUsedEmail(saved);
     }
-  }, []);
+  }, [verifiedEmail]);
 
 
   const handleInvalid = () => {
@@ -128,6 +139,24 @@ export default function LoginPage() {
                 transition: background-color 5000s ease-in-out 0s, color 5000s ease-in-out 0s !important;
             }
         `}} />
+        {isVerified && (
+            <div role="alert" style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '10px',
+              padding: '12px 16px',
+              marginBottom: '16px',
+              background: 'rgba(34, 197, 94, 0.12)',
+              border: '1px solid rgba(34, 197, 94, 0.35)',
+              borderRadius: '10px',
+              color: '#4ade80',
+              fontSize: '0.875rem',
+              fontWeight: 500,
+            }}>
+              <span style={{ fontSize: '1.1rem' }}>✅</span>
+              <span>Account verified! Sign in to continue to Apio.</span>
+            </div>
+          )}
         <div className={styles.card}>
           <form className={styles.form} onSubmit={handleLogin} noValidate>
             <div className={styles.field}>

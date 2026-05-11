@@ -182,6 +182,38 @@ function CheckEmailContent() {
     return () => window.removeEventListener('popstate', handlePopState);
   }, []);
 
+  // ── Poll for verification — detect when user clicks link on any device ────────
+  useEffect(() => {
+    if (!email) return;
+
+    const API = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000/api/v1';
+    let stopped = false;
+
+    const poll = async () => {
+      try {
+        const res = await fetch(
+          `${API}/auth/check-email-exists?email=${encodeURIComponent(email)}`,
+          { cache: 'no-store' },
+        );
+        if (res.ok) {
+          const data = await res.json() as { exists?: boolean };
+          if (data.exists && !stopped) {
+            stopped = true;
+            sessionStorage.removeItem(storageKey);
+            const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? 'http://localhost:3000';
+            window.location.href = `${appUrl}/projects`;
+          }
+        }
+      } catch {
+        // network error — keep polling silently
+      }
+    };
+
+    const interval = setInterval(poll, 4000); // poll every 4 seconds
+    return () => { stopped = true; clearInterval(interval); };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [email]);
+
   // ── WAITING STATE ─────────────────────────────────────────────────────────────
   return (
     <div className={`${fp.page} ${fp.dark}`}>
