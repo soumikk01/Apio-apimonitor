@@ -1,5 +1,5 @@
 'use client';
-import { authStorage } from '@/lib/fetchWithAuth';
+import { authStorage, fetchWithAuth } from '@/lib/fetchWithAuth';
 
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
@@ -39,9 +39,9 @@ export default function SettingsPage() {
   const [members, setMembers] = useState<{user: {id: string; email: string; name: string | null}, role: string}[]>([]);
   const [membersLoaded, setMembersLoaded] = useState(false);
 
-  const fetchMembers = async (pid: string, token: string) => {
+  const fetchMembers = async (pid: string) => {
     try {
-      const res = await fetch(`${API}/projects/${pid}/members`, { headers: { Authorization: `Bearer ${token}` } });
+      const res = await fetchWithAuth(`${API}/projects/${pid}/members`);
       if (res.ok) {
         setMembers(await res.json());
       }
@@ -63,7 +63,6 @@ export default function SettingsPage() {
     return () => window.removeEventListener('hashchange', handleHashChange);
   }, []);
 
-  // ── Resolve active project from URL param or localStorage ──
   useEffect(() => {
     const paramId = searchParams.get('projectId');
     const token = authStorage.getAccessToken();
@@ -75,7 +74,7 @@ export default function SettingsPage() {
 
       if (targetId) {
         try {
-          const r = await fetch(`${API}/projects/${targetId}`, { headers: { Authorization: `Bearer ${token}` } });
+          const r = await fetchWithAuth(`${API}/projects/${targetId}`);
           if (r.ok) {
             const p = await r.json() as { id: string; name: string };
             setProjectId(p.id);
@@ -83,7 +82,7 @@ export default function SettingsPage() {
             setEditName(p.name);
             localStorage.setItem('activeProjectId', p.id);
             setLoadState('ready');
-            void fetchMembers(p.id, token);
+            void fetchMembers(p.id);
             return;
           }
         } catch { /* ignore */ }
@@ -91,7 +90,7 @@ export default function SettingsPage() {
 
       // Fallback: load first project
       try {
-        const r = await fetch(`${API}/projects`, { headers: { Authorization: `Bearer ${token}` } });
+        const r = await fetchWithAuth(`${API}/projects`);
         if (!r.ok) { setLoadState('empty'); return; }
         const projects = await r.json() as { id: string; name: string }[];
         if (projects.length > 0) {
@@ -100,7 +99,7 @@ export default function SettingsPage() {
           setEditName(projects[0].name);
           localStorage.setItem('activeProjectId', projects[0].id);
           setLoadState('ready');
-          void fetchMembers(projects[0].id, token);
+          void fetchMembers(projects[0].id);
         } else {
           setLoadState('empty');
         }
@@ -112,11 +111,10 @@ export default function SettingsPage() {
     if (!projectId || !editName.trim() || editName.trim() === projectName) return;
     setIsSaving(true);
     setSaveStatus('idle');
-    const token = authStorage.getAccessToken();
     try {
-      const res = await fetch(`${API}/projects/${projectId}`, {
+      const res = await fetchWithAuth(`${API}/projects/${projectId}`, {
         method: 'PATCH',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name: editName.trim() }),
       });
       if (res.ok) {
@@ -137,16 +135,15 @@ export default function SettingsPage() {
     if (!projectId || !inviteInput.trim()) return;
     setIsInviting(true);
     setInviteError('');
-    const token = authStorage.getAccessToken();
     try {
-      const res = await fetch(`${API}/projects/${projectId}/members`, {
+      const res = await fetchWithAuth(`${API}/projects/${projectId}/members`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ emailOrId: inviteInput.trim() }),
       });
       if (res.ok) {
         setInviteInput('');
-        await fetchMembers(projectId, token!);
+        await fetchMembers(projectId);
       } else {
         let data: { message?: string };
         try {
@@ -171,12 +168,8 @@ export default function SettingsPage() {
 
   const handleDelete = async () => {
     if (!projectId) return;
-    const token = authStorage.getAccessToken();
     try {
-      await fetch(`${API}/projects/${projectId}`, {
-        method: 'DELETE',
-        headers: { Authorization: `Bearer ${token}` }
-      });
+      await fetchWithAuth(`${API}/projects/${projectId}`, { method: 'DELETE' });
       window.location.href = '/projects';
     } catch { /* ignore */ }
   };

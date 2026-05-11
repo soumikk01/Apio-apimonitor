@@ -1,5 +1,6 @@
 'use client';
-import { authStorage } from '@/lib/fetchWithAuth';
+import { authStorage, fetchWithAuth } from '@/lib/fetchWithAuth';
+import { toast } from 'sonner';
 
 import { useState, useEffect, useCallback } from 'react';
 
@@ -7,8 +8,9 @@ import { useAuth } from '@/hooks/useAuth';
 import { Shimmer, ShimmerBlock, ShimmerRow } from '@/components/Shimmer/Shimmer';
 import { AVATARS } from './avatars';
 import styles from './AccountPage.module.scss';
+import { API_BASE } from '@/lib/queries';
 
-const API = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000/api/v1';
+const API = API_BASE;
 
 interface Stats {
   totalProjects: number;
@@ -19,9 +21,9 @@ interface Stats {
 export default function AccountPage() {
   const { user, logoutWithTransition } = useAuth();
 
-
   const [stats, setStats] = useState<Stats>({ totalProjects: 0, totalCalls: 0 });
   const [isLoading, setIsLoading] = useState(true);
+  const [loadError, setLoadError] = useState('');
   const [showAvatarPicker, setShowAvatarPicker] = useState(false);
 
   // Saved avatar (persisted in DB + localStorage)
@@ -71,11 +73,10 @@ export default function AccountPage() {
     if (pendingAvatar === savedAvatar) { closePicker(); return; }
     setSavingAvatar(true);
     setAvatarSaveStatus('idle');
-    const token = authStorage.getAccessToken();
     try {
-      const res = await fetch(`${API}/users/me/avatar`, {
+      const res = await fetchWithAuth(`${API}/users/me/avatar`, {
         method: 'PATCH',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ avatar: pendingAvatar }),
       });
       if (!res.ok) throw new Error('Failed');
@@ -84,10 +85,12 @@ export default function AccountPage() {
       window.dispatchEvent(new Event('avatarChanged'));
       setSavedAvatar(pendingAvatar);
       setAvatarSaveStatus('success');
+      toast.success('Avatar updated successfully');
       setTimeout(() => { closePicker(); }, 800);
     } catch (err) {
       console.error('Failed to update avatar in DB', err);
       setAvatarSaveStatus('error');
+      toast.error('Failed to save avatar. Please try again.');
     } finally {
       setSavingAvatar(false);
     }
@@ -97,19 +100,43 @@ export default function AccountPage() {
     const token = authStorage.getAccessToken();
     if (!token) return;
     setIsLoading(true);
+    setLoadError('');
     try {
-      const pRes = await fetch(`${API}/projects`, { headers: { Authorization: `Bearer ${token}` } });
-      if (pRes.ok) {
-        const projects = await pRes.json() as unknown[];
-        setStats(s => ({ ...s, totalProjects: projects.length }));
-      }
-    } catch { /* silent */ }
-    setIsLoading(false);
+      const pRes = await fetchWithAuth(`${API}/projects`);
+      if (!pRes.ok) throw new Error(`Server error ${pRes.status}`);
+      const projects = await pRes.json() as unknown[];
+      setStats(s => ({ ...s, totalProjects: projects.length }));
+    } catch (err) {
+      const msg = (err as Error).message;
+      setLoadError(msg || 'Failed to load account data. Please refresh.');
+    } finally {
+      setIsLoading(false);
+    }
   }, []);
 
   useEffect(() => { void loadData(); }, [loadData]);
 
   const handleLogout = () => { logoutWithTransition(); };
+
+  // Error state
+  if (loadError && !isLoading) {
+    return (
+      <main className={styles.content}>
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', minHeight: '300px', gap: '1rem', color: 'var(--text-muted)' }}>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" width="48" height="48" style={{ opacity: 0.4 }}>
+            <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>
+          </svg>
+          <p style={{ fontSize: '0.9rem', textAlign: 'center', maxWidth: '320px' }}>{loadError}</p>
+          <button
+            onClick={() => void loadData()}
+            style={{ padding: '8px 20px', borderRadius: '8px', background: 'var(--accent)', color: '#fff', border: 'none', cursor: 'pointer', fontSize: '0.875rem' }}
+          >
+            Retry
+          </button>
+        </div>
+      </main>
+    );
+  }
 
   if (isLoading) {
     return (

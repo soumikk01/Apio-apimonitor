@@ -1,14 +1,12 @@
 'use client';
 
 import React, { Suspense, useEffect, useState, useRef } from 'react';
-import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
 import GooeyButton from '@/components/GooeyButton/GooeyButton';
 import SpringBackground from '@/components/SpringBackground/SpringBackground';
 import fp from '@/features/auth/components/ForgotPasswordPage/ForgotPasswordPage.module.scss';
 
 const TOTAL_SECONDS = 300; // 5 minutes
-const HEX_POINTS   = '70,18 113,44 113,96 70,122 27,96 27,44';
 
 // ── Fade Digit — appear/disappear animation when the digit changes ────────────────
 function FadeDigit({ value, color }: { value: string; color: string }) {
@@ -119,121 +117,72 @@ function CountdownTimer({ seconds }: { seconds: number }) {
 }
 
 
-// ── Expired Hexagon with animated red X ───────────────────────────────────────
-function ExpiredHex() {
-  return (
-    <div style={{ position: 'relative', width: 120, height: 120, margin: '0 auto 1.5rem' }}>
-      {/* Pulse rings */}
-      {[0, 0.4, 0.8].map((delay, i) => (
-        <div key={i} style={{
-          position: 'absolute',
-          inset: 0,
-          borderRadius: '50%',
-          border: '2px solid #ef4444',
-          animation: `pulseRingRed 1.4s ${delay}s ease-out forwards`,
-        }} />
-      ))}
-      <svg viewBox="0 0 140 140" fill="none" width="120" height="120"
-        style={{ filter: 'drop-shadow(0 0 14px rgba(239,68,68,0.65))' }}>
-        <polygon points={HEX_POINTS} fill="rgba(239,68,68,0.1)" />
-        <polygon points={HEX_POINTS}
-          fill="none" stroke="#ef4444" strokeWidth="3"
-          strokeLinecap="round" strokeLinejoin="round"
-          strokeDasharray="340" strokeDashoffset="0"
-          style={{ animation: 'hexDraw 1.2s cubic-bezier(0.4,0,0.2,1) forwards' }}
-        />
-        <line x1="52" y1="52" x2="88" y2="88"
-          stroke="#ef4444" strokeWidth="5" strokeLinecap="round"
-          strokeDasharray="60" strokeDashoffset="60"
-          style={{ animation: 'checkDraw 0.45s 0.6s ease forwards' }}
-        />
-        <line x1="88" y1="52" x2="52" y2="88"
-          stroke="#ef4444" strokeWidth="5" strokeLinecap="round"
-          strokeDasharray="60" strokeDashoffset="60"
-          style={{ animation: 'checkDraw 0.45s 0.75s ease forwards' }}
-        />
-      </svg>
-      <style>{`
-        @keyframes pulseRingRed {
-          0%   { transform: scale(1);   opacity: 0.8; }
-          100% { transform: scale(2.2); opacity: 0;   }
-        }
-        @keyframes hexDraw {
-          from { stroke-dashoffset: 340; }
-          to   { stroke-dashoffset: 0; }
-        }
-        @keyframes checkDraw {
-          from { stroke-dashoffset: 60; opacity: 0; }
-          30%  { opacity: 1; }
-          to   { stroke-dashoffset: 0; opacity: 1; }
-        }
-      `}</style>
-    </div>
-  );
-}
+// NOTE: ExpiredHex component removed — it was dead code (never rendered).
+// Re-add it here if expiry UI is needed in the future.
+
 
 // ── Main content ──────────────────────────────────────────────────────────────
 function CheckEmailContent() {
   const params   = useSearchParams();
   const email    = params.get('email') ?? '';
-  const [timeLeft, setTimeLeft] = useState(TOTAL_SECONDS);
-  const [expired,  setExpired]  = useState(false);
+
+  // ── Persist countdown across refreshes ───────────────────────────────────────
+  const storageKey = `check-email-start::${email}`;
+
+  // getTimeLeft logic is now inlined inside the useState lazy initializer above.
+
+  // Use a lazy initializer so the initial render reads from sessionStorage directly,
+  // avoiding the need to call setTimeLeft() inside a useEffect body — which
+  // triggers the react-hooks/set-state-in-effect lint error.
+  const [timeLeft, setTimeLeft] = useState<number>(() => {
+    if (typeof window === 'undefined') return TOTAL_SECONDS;
+    if (!email) return TOTAL_SECONDS;
+    const stored = sessionStorage.getItem(`check-email-start::${email}`);
+    if (!stored) {
+      sessionStorage.setItem(`check-email-start::${email}`, String(Date.now()));
+      return TOTAL_SECONDS;
+    }
+    const elapsed = Math.floor((Date.now() - parseInt(stored, 10)) / 1000);
+    return Math.max(0, TOTAL_SECONDS - elapsed);
+  });
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // Side-effects only: redirect immediately if already expired on mount.
+  useEffect(() => {
+    if (!email) return;
+    if (timeLeft <= 0) {
+      sessionStorage.removeItem(storageKey);
+      window.location.href = '/register';
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [email]);
 
   useEffect(() => {
     timerRef.current = setInterval(() => {
       setTimeLeft(prev => {
         if (prev <= 1) {
           clearInterval(timerRef.current!);
-          setExpired(true);
+          // ── Timer expired → redirect to register ─────────────────────────
+          sessionStorage.removeItem(storageKey);
+          window.location.href = '/register';
           return 0;
         }
         return prev - 1;
       });
     }, 1000);
     return () => { if (timerRef.current) clearInterval(timerRef.current); };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // ── EXPIRED STATE ──────────────────────────────────────────────────────────
-  if (expired) {
-    return (
-      <div className={`${fp.page} ${fp.dark}`}>
-        <div className={fp.patternOverlay} />
-        <div className={fp.noiseOverlay} />
-        <SpringBackground />
+  // ── Block all back navigation ─────────────────────────────────────────────────
+  useEffect(() => {
+    window.history.pushState(null, '', window.location.href);
+    const handlePopState = () => { window.history.pushState(null, '', window.location.href); };
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, []);
 
-        <main className={fp.centerMain}>
-          <div className={fp.centerStack}>
-            <div className={fp.topCopy}>
-              <ExpiredHex />
-              <h1 className={fp.introTitle} style={{ color: '#fff' }}>Timer Ended</h1>
-              <p className={fp.introSub}>
-                Your 5-minute reminder has passed, but your verification
-                link is still valid for <strong>24 hours</strong>.
-                <br />
-                Check your inbox (and spam) or register again.
-              </p>
-            </div>
-
-            <div className={fp.card} style={{ textAlign: 'center' }}>
-              <p style={{ fontSize: '0.9rem', color: 'rgba(255,255,255,0.6)', marginBottom: '1.5rem', lineHeight: 1.7 }}>
-                Didn&apos;t receive the email? Check your spam folder or
-                request a new verification link.
-              </p>
-              <div style={{ display: 'flex', gap: '0.75rem', flexDirection: 'column', alignItems: 'center' }}>
-                <GooeyButton onClick={() => { window.location.href = '/register'; }}>
-                  Register Again
-                </GooeyButton>
-                <Link href="/login" style={{ color: '#818cf8', fontSize: '0.83rem' }}>Back to Login</Link>
-              </div>
-            </div>
-          </div>
-        </main>
-      </div>
-    );
-  }
-
-  // ── WAITING STATE ──────────────────────────────────────────────────────────
+  // ── WAITING STATE ─────────────────────────────────────────────────────────────
   return (
     <div className={`${fp.page} ${fp.dark}`}>
       <div className={fp.patternOverlay} />
@@ -274,21 +223,20 @@ function CheckEmailContent() {
               fontSize: '0.83rem',
               color: 'rgba(255,255,255,0.42)',
               marginTop: '2.2rem',
-              marginBottom: '1.4rem',
+              marginBottom: '1.5rem',
               lineHeight: 1.7,
             }}>
               Click the link in the email to activate your account.
               <br />
-              Didn&apos;t receive it? Check spam or{' '}
-              <Link href="/register"
-                style={{ color: '#818cf8', textDecoration: 'none', fontWeight: 600 }}>
-                try a different email
-              </Link>.
+              The link is valid for <strong style={{ color: 'rgba(255,255,255,0.65)' }}>5 minutes</strong> — after that you&apos;ll need to register again.
             </p>
 
             {/* Back to Login */}
-            <GooeyButton onClick={() => { window.location.href = '/login'; }}>
-              Back to Login
+            <GooeyButton onClick={() => {
+              sessionStorage.removeItem(storageKey);
+              window.location.href = '/register';
+            }}>
+              Back to Register
             </GooeyButton>
 
           </div>

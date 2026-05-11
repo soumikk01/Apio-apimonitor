@@ -187,6 +187,21 @@ $r-md:        16px;
   justify-content: center;
   padding: 0;
   pointer-events: auto;
+  transition: padding 0.4s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.scrolledWrap {
+  padding-top: 1rem;
+  pointer-events: none;
+  > * {
+    pointer-events: auto;
+  }
+}
+
+.scrolledHidden {
+  opacity: 0 !important;
+  pointer-events: none;
+  transform: translateY(-10px) !important;
 }
 
 .nav {
@@ -204,7 +219,25 @@ $r-md:        16px;
   border: none;
   border-bottom: 1px solid rgba(255, 255, 255, 0.4);
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.04);
-  transition: background 0.4s ease, border-color 0.4s ease, box-shadow 0.4s ease;
+  transition: all 0.4s cubic-bezier(0.22, 1, 0.36, 1);
+  will-change: width, border-radius, background, height, box-shadow;
+}
+
+.navScrolled {
+  width: max-content;
+  height: 52px;
+  border-radius: $pill;
+  padding: 0 16px;
+  background: rgba(255, 255, 255, 0.85);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.1);
+  border: 1px solid rgba(0, 0, 0, 0.06);
+  border-bottom: 1px solid rgba(0, 0, 0, 0.06);
+
+  // When inside a dark theme container, if needed
+  .dark & {
+    background: rgba(26, 26, 26, 0.85);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+  }
 }
 
 .navIn {
@@ -220,7 +253,7 @@ $r-md:        16px;
   align-items: center;
   gap: 12px;
   cursor: pointer;
-  transition: transform 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
+  transition: transform 0.4s cubic-bezier(0.34, 1.56, 0.64, 1), opacity 0.3s ease;
   color: $text-main;
   z-index: 101;
 
@@ -314,6 +347,7 @@ $r-md:        16px;
   display: flex;
   align-items: center;
   gap: 12px;
+  transition: opacity 0.3s ease, transform 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
 
   @media (max-width: 720px) {
     right: 1.25rem;

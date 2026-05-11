@@ -1,17 +1,21 @@
 'use client';
 import { authStorage, fetchWithAuth } from '@/lib/fetchWithAuth';
+import { toast } from 'sonner';
 
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import Link from 'next/link';
 import { useRouter, usePathname, useSearchParams } from 'next/navigation';
 import { Moon, Sun, Droplets, Monitor, User, ClipboardList, MessageSquare } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
 import { useTheme } from '@/hooks/useTheme';
+import { useQuery } from '@tanstack/react-query';
+import { queryKeys, fetchProjects as fetchProjectsList, API_BASE } from '@/lib/queries';
 import { AVATARS } from '@/features/dashboard/components/AccountPage/avatars';
 import { openAiPanel } from '@/components/AiChatPanel/AiChatPanel';
 import styles from './TopNavbar.module.scss';
 
-const API = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000/api/v1';
+// Use the shared constant — avoids repeating the env-var fallback across files.
+const API = API_BASE;
 
 interface Project {
   id: string;
@@ -95,35 +99,31 @@ export default function TopNavbar() {
   const currentAvatar = AVATARS[avatarIndex] ?? AVATARS[0];
 
 
-  /* ── fetch projects ── */
-  const fetchProjects = useCallback(async (signal: AbortSignal) => {
-    try {
-      const res = await fetchWithAuth(`${API}/projects`, { signal });
-      if (!res.ok) return;
-      const data = await res.json() as Project[];
-      const urlId = searchParams.get('projectId');
-      const savedId = localStorage.getItem('activeProjectId');
-      const targetId = urlId ?? savedId;
-      const found = data.find(p => p.id === targetId) ?? data[0] ?? null;
-      setActiveProject(found);
-    } catch (err) {
-      if ((err as Error).name === 'AbortError') return; // navigation cancelled — ignore
-    }
-  }, [searchParams]);
+  /* ── Projects via React Query — deduplicates with all other pages ── */
+  const hasSession = !!user || authStorage.hasSession();
+  const { data: projects = [] } = useQuery({
+    queryKey: queryKeys.projects.list(),
+    queryFn: fetchProjectsList,
+    enabled: hasSession,
+    staleTime: 60_000,
+  });
 
+  // Derive active project from cache — zero extra network requests
   useEffect(() => {
-    // Fire as soon as there's a stored token — don't wait for user object to hydrate
-    if (!user && !authStorage.hasSession()) return;
-    const controller = new AbortController();
-    void fetchProjects(controller.signal);
-    return () => controller.abort();
-  }, [user, fetchProjects]);
+    const urlId = searchParams.get('projectId');
+    const savedId = localStorage.getItem('activeProjectId');
+    const targetId = urlId ?? savedId;
+    const found = projects.find(p => p.id === targetId) ?? projects[0] ?? null;
+    setActiveProject(found as Project | null);
+  }, [projects, searchParams]);
 
-  /* ── fetch active service name ── */
+  /* ── fetch active service name — only when on a dashboard page with a projectId ── */
   useEffect(() => {
     const serviceId = searchParams.get('serviceId');
     const projectId = searchParams.get('projectId');
-    if (!projectId) {
+
+    // Guard: skip fetch on pages that never need a service name
+    if (!projectId || isProjectsPage || isAccountPage) {
       setActiveServiceName('');
       return;
     }
@@ -169,7 +169,7 @@ export default function TopNavbar() {
     }
 
     return () => controller.abort();
-  }, [searchParams]);
+  }, [searchParams, isProjectsPage, isAccountPage]);
 
   /* ── Ctrl+K shortcut ── */
   useEffect(() => {
@@ -332,7 +332,7 @@ export default function TopNavbar() {
 
 
         {/* Search */}
-        <div 
+        <div
           className={`${styles.searchBox} ${searchOpen ? styles.searchOpen : ''}`}
           onClick={() => {
             if (!searchOpen) {
@@ -347,10 +347,16 @@ export default function TopNavbar() {
           <input
             ref={searchRef}
             className={styles.searchInput}
-            placeholder="Search…"
+            placeholder="Search projects… (coming soon)"
             value={searchVal}
             onChange={e => setSearchVal(e.target.value)}
+            onFocus={() => {
+              if (!searchVal) {
+                toast.info('Global search coming soon!', { id: 'search-wip', duration: 2000 });
+              }
+            }}
             onBlur={() => { if (!searchVal) setSearchOpen(false); }}
+            readOnly
           />
           {!searchOpen && (
             <button className={styles.kbdBtn} onClick={() => { setSearchOpen(true); setTimeout(() => searchRef.current?.focus(), 50); }}>

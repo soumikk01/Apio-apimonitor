@@ -8,6 +8,7 @@ import {
   Req,
   Query,
   UnauthorizedException,
+  Headers as NestHeaders,
 } from '@nestjs/common';
 
 import { Throttle, SkipThrottle } from '@nestjs/throttler';
@@ -32,12 +33,33 @@ export class AuthController {
    * Rate-limited: 10 requests per 60 seconds per IP.
    */
   @Throttle({
-    short: { ttl: 60_000, limit: 10 },
-    medium: { ttl: 60_000, limit: 10 },
+    short: { ttl: 60_000, limit: 10 }, // 10 per min (burst)
+    medium: { ttl: 300_000, limit: 30 }, // 30 per 5 min (sustained)
   })
   @Get('check-email')
   async checkEmail(@Query('email') email: string) {
     return validateEmail(email ?? '');
+  }
+
+  /**
+   * GET /auth/check-email-exists?email=user@example.com
+   * Checks if an email is already registered in the database.
+   * Used before sign-up so the frontend can show "account already exists" immediately.
+   * Returns { exists: boolean }
+   * Rate-limited: 10 requests per 60 seconds per IP.
+   */
+  @Throttle({
+    short: { ttl: 60_000, limit: 10 }, // 10 per min (burst)
+    medium: { ttl: 300_000, limit: 30 }, // 30 per 5 min (sustained)
+  })
+  @Get('check-email-exists')
+  async checkEmailExists(@Query('email') email: string) {
+    if (!email?.trim()) return { exists: false };
+    const user = await this.prisma.user.findUnique({
+      where: { email: email.trim().toLowerCase() },
+      select: { id: true },
+    });
+    return { exists: !!user };
   }
 
   /**
@@ -77,12 +99,70 @@ export class AuthController {
   }
 
   /**
+   * POST /auth/pre-register
+   * Stores pending registration + sends verification email.
+   * NO user is written to DB until the email link is clicked.
+   * Rate-limited: 3 per 5 minutes per IP.
+   */
+  @Throttle({
+    short: { ttl: 300_000, limit: 3 }, // 3 per 5 min (burst)
+    medium: { ttl: 900_000, limit: 5 }, // 5 per 15 min (sustained)
+  })
+  @Post('pre-register')
+  @HttpCode(HttpStatus.OK)
+  preRegister(@Body() body: { name: string; email: string; password: string }) {
+    return this.authService.preRegister(body);
+  }
+
+  /**
+   * GET /auth/verify-pending?token=xxx&email=yyy
+   * Verifies the pending registration token and CREATES the user in DB.
+   * Called when user clicks the verification link in their email.
+   * Rate-limited: 10 per 60 seconds per IP.
+   */
+  @Throttle({
+    short: { ttl: 60_000, limit: 10 }, // 10 per min (burst)
+    medium: { ttl: 300_000, limit: 20 }, // 20 per 5 min (sustained)
+  })
+  @Get('verify-pending')
+  async verifyPending(
+    @Query('token') token: string,
+    @Query('email') email: string,
+  ) {
+    return this.authService.verifyPendingRegistration(token, email);
+  }
+
+  /**
+   * POST /auth/reset-password
+   * Wraps BetterAuth's email-otp/reset-password endpoint.
+   * On success fires a security email showing date, location (geo-IP) and device.
+   * Rate-limited: 5 per 5 minutes per IP.
+   */
+  @Throttle({
+    short: { ttl: 300_000, limit: 5 }, // 5 per 5 min (burst)
+    medium: { ttl: 900_000, limit: 8 }, // 8 per 15 min (sustained)
+  })
+  @Post('reset-password')
+  @HttpCode(HttpStatus.OK)
+  async resetPassword(
+    @Body() body: { email: string; otp: string; password: string },
+    @Req() req: { headers: Record<string, string | string[] | undefined> },
+    @NestHeaders('user-agent') userAgent: string,
+  ) {
+    return this.authService.resetPasswordWithSecurityEmail(
+      body,
+      req.headers,
+      userAgent ?? '',
+    );
+  }
+
+  /**
    * POST /auth/register
    * 3 requests per 5 minutes per IP — prevents account spam
    */
   @Throttle({
-    short: { ttl: 300_000, limit: 3 },
-    medium: { ttl: 300_000, limit: 3 },
+    short: { ttl: 300_000, limit: 3 }, // 3 per 5 min (burst)
+    medium: { ttl: 900_000, limit: 5 }, // 5 per 15 min (sustained)
   })
   @Post('register')
   register(@Body() dto: RegisterDto) {
@@ -94,8 +174,8 @@ export class AuthController {
    * 5 requests per 60 seconds per IP — brute-force protection
    */
   @Throttle({
-    short: { ttl: 60_000, limit: 5 },
-    medium: { ttl: 60_000, limit: 5 },
+    short: { ttl: 60_000, limit: 5 }, // 5 per min (burst)
+    medium: { ttl: 600_000, limit: 15 }, // 15 per 10 min (sustained)
   })
   @Post('login')
   @HttpCode(HttpStatus.OK)
@@ -109,8 +189,8 @@ export class AuthController {
    * Used exclusively by the Admin Panel — tokens cannot access user-only routes.
    */
   @Throttle({
-    short: { ttl: 60_000, limit: 5 },
-    medium: { ttl: 60_000, limit: 5 },
+    short: { ttl: 60_000, limit: 5 }, // 5 per min (burst)
+    medium: { ttl: 600_000, limit: 10 }, // 10 per 10 min (sustained — stricter for admin)
   })
   @Post('admin/login')
   @HttpCode(HttpStatus.OK)
@@ -123,8 +203,8 @@ export class AuthController {
    * 30 requests per 60 seconds — generous for silent token renewal across tabs
    */
   @Throttle({
-    short: { ttl: 60_000, limit: 30 },
-    medium: { ttl: 60_000, limit: 30 },
+    short: { ttl: 60_000, limit: 30 }, // 30 per min (generous — multi-tab silent renewal)
+    medium: { ttl: 300_000, limit: 120 }, // 120 per 5 min (sustained)
   })
   @Post('refresh')
   @HttpCode(HttpStatus.OK)

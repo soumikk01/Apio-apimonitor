@@ -26,10 +26,13 @@ export class AuditService {
   async findAll(userId: string, query: AuditQueryDto) {
     const { page, limit, projectId, startDate, endDate } = query;
 
-    // Verify project ownership if projectId is provided
+    // Verify project access (owner OR member) if projectId provided
     if (projectId) {
       const project = await this.prisma.project.findFirst({
-        where: { id: projectId, userId },
+        where: {
+          id: projectId,
+          OR: [{ userId }, { members: { some: { userId } } }],
+        },
       });
       if (!project)
         throw new ForbiddenException('Project not found or access denied');

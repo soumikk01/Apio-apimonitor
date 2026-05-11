@@ -250,10 +250,10 @@ export default function LandingPage() {
   const magSecondary = useMagnetic(0.25);
   const magToggle    = useMagnetic(0.35);
 
-  // ── Scroll restoration fix ──────────────────────────────────────
-  // The actual scroll container is .pageContent div (overflow-y:auto),
-  // NOT window — so window.scrollTo does nothing. Use a ref instead.
+  // ── Scroll restoration fix & Pill Navbar ──────────────────────────────────────
+  const [isScrolled, setIsScrolled] = useState(false);
   const pageContentRef = useRef<HTMLDivElement>(null);
+
   useEffect(() => {
     // Scroll the actual container element to top
     if (pageContentRef.current) {
@@ -262,6 +262,17 @@ export default function LandingPage() {
     // Also disable browser-level scroll restoration as a safety net
     if ('scrollRestoration' in window.history) {
       window.history.scrollRestoration = 'manual';
+    }
+
+    const handleScroll = () => {
+      if (!pageContentRef.current) return;
+      setIsScrolled(pageContentRef.current.scrollTop > 50);
+    };
+
+    const el = pageContentRef.current;
+    if (el) {
+      el.addEventListener('scroll', handleScroll, { passive: true });
+      return () => el.removeEventListener('scroll', handleScroll);
     }
   }, []);
 
@@ -278,8 +289,8 @@ export default function LandingPage() {
   return (
     <div className={`${styles.layout}${dark ? ' dark ' + styles.dark : ''}`}>
       {/* ── NAVBAR ── */}
-      <header className={styles.navWrap}>
-        <div className={styles.logoAbsolute}>
+      <header className={`${styles.navWrap} ${isScrolled ? styles.scrolledWrap : ''}`}>
+        <div className={`${styles.logoAbsolute} ${isScrolled ? styles.scrolledHidden : ''}`}>
           <svg viewBox="0 0 20 20" fill="none" width="22" height="22" className={styles.logoSvg}>
             <polygon points="10,1 19,6 19,14 10,19 1,14 1,6" stroke="currentColor" strokeWidth="1.5" fill="none"/>
             <circle cx="10" cy="10" r="3" fill="currentColor"/>
@@ -300,7 +311,7 @@ export default function LandingPage() {
             </svg>
           </span>
         </div>
-        <nav className={`${styles.nav} ${styles.navIn}`}>
+        <nav className={`${styles.nav} ${styles.navIn} ${isScrolled ? styles.navScrolled : ''}`}>
           <div className={styles.navLinks}>
             {['Products','Solutions','Pricing','Company','Support','Docs'].map((link, i) => (
               <Link key={link} href={link === 'Docs' ? DOCS_URL : link === 'Solutions' ? '#features' : link === 'Pricing' ? '#stats' : '#'}
@@ -310,7 +321,7 @@ export default function LandingPage() {
               </Link>
             ))}
           </div>
-          <div className={styles.navRight}>
+          <div className={`${styles.navRight} ${isScrolled ? styles.scrolledHidden : ''}`}>
             <Link href={`${AUTH_URL}/login`} className={styles.navPill}>Try for free</Link>
             <div className={styles.navDivider} />
             <button

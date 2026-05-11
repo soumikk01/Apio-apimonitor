@@ -1,5 +1,6 @@
 'use client';
 
+import { useEffect, useMemo } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { useQuery } from '@tanstack/react-query';
 import Link from 'next/link';
@@ -33,10 +34,13 @@ export default function OverviewPage() {
   });
 
   // ── Resolve active project ID ────────────────────────────────────────────────
-  const resolvedProjectId = paramId ?? (() => {
+  // useMemo prevents the localStorage read from running as a render-phase side
+  // effect, which would be unsafe under React 18 Strict Mode double-invoke.
+  const resolvedProjectId = useMemo(() => {
+    if (paramId) return paramId;
     const saved = typeof window !== 'undefined' ? localStorage.getItem('activeProjectId') : null;
     return projects?.find(p => p.id === saved)?.id ?? projects?.[0]?.id ?? '';
-  })();
+  }, [paramId, projects]);
 
   // ── Project detail — shows instantly from cache (5 min stale time) ──────────
   const { data: project, isLoading: projectLoading } = useQuery({
@@ -69,7 +73,7 @@ export default function OverviewPage() {
     queryFn: () => fetchProjectStats(resolvedProjectId),
     enabled: !!resolvedProjectId,
     staleTime: 30_000,
-    refetchInterval: 30_000, // auto-refresh every 30s
+    refetchInterval: 30_000,
   });
 
   // ── Recent calls — 15s stale time, seeds the traffic feed ──────────────────
@@ -81,10 +85,10 @@ export default function OverviewPage() {
     refetchInterval: 15_000,
   });
 
-  // Persist active project
-  if (project?.id && typeof window !== 'undefined') {
-    localStorage.setItem('activeProjectId', project.id);
-  }
+  // Persist active project — in useEffect to avoid render side-effects
+  useEffect(() => {
+    if (project?.id) localStorage.setItem('activeProjectId', project.id);
+  }, [project?.id]);
 
   const projectId = project?.id ?? resolvedProjectId;
   const projectName = project?.name ?? '';

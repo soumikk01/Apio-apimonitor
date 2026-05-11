@@ -7,10 +7,50 @@ import ButtonLogoSpinner from '../../../../components/ButtonLogoSpinner/ButtonLo
 import GooeyButton from '../../../../components/GooeyButton/GooeyButton';
 import GooeyErrorFilter from '../../../../components/GooeyErrorFilter/GooeyErrorFilter';
 import AnimatedPasswordInput from '../../../../components/AnimatedPasswordInput/AnimatedPasswordInput';
+import PasswordStrengthPanel from '../../../../components/PasswordStrengthPanel/PasswordStrengthPanel';
 import { ApioTypeWriter } from '@/components/ApioTypeWriter/ApioTypeWriter';
 import styles from './RegisterPage.module.scss';
 
-/* ── Sparkle Background (mirrors LandingPage stars) ── */
+/* ── Per-email rate limit (localStorage) ─────────────────────────────────────
+ * Key: `apio_reg_${email}`  Value: JSON { fails: number, blockedUntil?: number, permanent?: boolean }
+ * 3 fails  → blocked 30 minutes
+ * 15 fails → permanently blocked (that email only)
+ */
+const RL_KEY = (email: string) => `apio_reg_${email.toLowerCase().trim()}`;
+
+interface RLRecord { fails?: number; blockedUntil?: number; permanent?: boolean }
+
+function getRl(email: string): RLRecord {
+  try { return JSON.parse(localStorage.getItem(RL_KEY(email)) ?? '{}') as RLRecord; }
+  catch { return { fails: 0 }; }
+}
+function setRl(email: string, rec: RLRecord) {
+  try { localStorage.setItem(RL_KEY(email), JSON.stringify(rec)); } catch { /* ignore */ }
+}
+function recordFail(email: string): { blocked: boolean; permanent: boolean; minutesLeft: number } {
+  const rec = getRl(email);
+  const fails = (rec.fails ?? 0) + 1;
+  if (fails >= 15) {
+    setRl(email, { fails, permanent: true });
+    return { blocked: true, permanent: true, minutesLeft: 0 };
+  }
+  if (fails >= 3) {
+    const blockedUntil = Date.now() + 30 * 60 * 1000;
+    setRl(email, { fails, blockedUntil });
+    return { blocked: true, permanent: false, minutesLeft: 30 };
+  }
+  setRl(email, { fails });
+  return { blocked: false, permanent: false, minutesLeft: 0 };
+}
+function checkBlock(email: string): { blocked: boolean; permanent: boolean; minutesLeft: number } {
+  const rec = getRl(email);
+  if (rec.permanent) return { blocked: true, permanent: true, minutesLeft: 0 };
+  if (rec.blockedUntil && Date.now() < rec.blockedUntil) {
+    return { blocked: true, permanent: false, minutesLeft: Math.ceil((rec.blockedUntil - Date.now()) / 60000) };
+  }
+  return { blocked: false, permanent: false, minutesLeft: 0 };
+}
+
 const SpringBackground = () => (
   <div className={styles.springBg} aria-hidden="true">
     <svg className={`${styles.sparkle} ${styles.sp1}`} viewBox="0 0 20 20" fill="none"><path d="M10,1 L11.2,8.8 L19,10 L11.2,11.2 L10,19 L8.8,11.2 L1,10 L8.8,8.8 Z" fill="#1A1A1A" opacity="0.65"/></svg>
@@ -21,21 +61,22 @@ const SpringBackground = () => (
   </div>
 );
 
-export default function RegisterPage() {
-  // dark mode is always on — no toggle needed
+// idle | checking | loading | success | error | duplicate
+type BtnState = 'idle' | 'checking' | 'loading' | 'success' | 'error' | 'duplicate';
 
+export default function RegisterPage() {
   const { register, loginWithGoogle, loginWithGitHub } = useAuth();
 
-  const [name, setName] = useState('');
-  const [email, setEmail] = useState('');
-  const [emailError, setEmailError] = useState('');
+  const [name, setName]               = useState('');
+  const [email, setEmail]             = useState('');
+  const [emailError, setEmailError]   = useState('');
   const [emailTouched, setEmailTouched] = useState(false);
-  const [emailValid, setEmailValid] = useState(false);
-  const [emailChecking, setEmailChecking] = useState(false);
-  const [password, setPassword] = useState('');
-  const [error, setError] = useState('');
-  const [isShaking, setIsShaking] = useState(false);
-  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [emailValid, setEmailValid]   = useState(false);
+  const [password, setPassword]       = useState('');
+  const [passwordTouched, setPasswordTouched] = useState(false);
+  const [error, setError]             = useState('');
+  const [isShaking, setIsShaking]     = useState(false);
+  const [btnState, setBtnState]       = useState<BtnState>('idle');
 
   const BLOCKED_DOMAINS = new Set([
     'mailinator.com','trashmail.com','guerrillamail.com','guerrillamail.net',
@@ -46,7 +87,7 @@ export default function RegisterPage() {
     'trashmail.at','trashmail.io','trashmail.xyz','wegwerfmail.de',
   ]);
 
-  const validateEmail = (val: string): string => {
+  const validateEmailLocal = (val: string): string => {
     const v = val.trim();
     if (!v) return 'Email is required.';
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(v)) return 'Enter a valid email address.';
@@ -57,8 +98,10 @@ export default function RegisterPage() {
 
   const handleEmailChange = (val: string) => {
     setEmail(val);
+    // Reset button to idle when user changes email
+    if (btnState !== 'idle') setBtnState('idle');
     if (emailTouched) {
-      const err = validateEmail(val);
+      const err = validateEmailLocal(val);
       setEmailError(err);
       setEmailValid(!err);
     }
@@ -66,116 +109,139 @@ export default function RegisterPage() {
 
   const handleEmailBlur = async () => {
     setEmailTouched(true);
-    // Run instant local checks first
-    const localErr = validateEmail(email);
-    if (localErr) {
-      setEmailError(localErr);
-      setEmailValid(false);
-      return;
-    }
-    // Local checks passed — now verify domain via backend DNS MX lookup
-    setEmailChecking(true);
-    setEmailError('');
+    const localErr = validateEmailLocal(email);
+    if (localErr) { setEmailError(localErr); setEmailValid(false); return; }
+    setBtnState('checking'); setEmailError('');
     try {
       const API = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000/api/v1';
       const res = await fetch(`${API}/auth/check-email?email=${encodeURIComponent(email.trim())}`);
       if (res.ok) {
-        const data = (await res.json()) as { valid: boolean; reason?: string };
-        if (!data.valid) {
-          setEmailError(data.reason ?? 'This email address cannot receive mail.');
-          setEmailValid(false);
-        } else {
-          setEmailError('');
-          setEmailValid(true);
-        }
+        const data = await res.json() as { valid: boolean; reason?: string };
+        if (!data.valid) { setEmailError(data.reason ?? 'This email cannot receive mail.'); setEmailValid(false); }
+        else { setEmailError(''); setEmailValid(true); }
       }
-      // If the endpoint is unreachable, fail open (don’t block the user)
-    } catch {
-      // network error — allow through
-    } finally {
-      setEmailChecking(false);
-    }
+    } catch { /* fail open */ }
+    finally { setBtnState('idle'); }
   };
 
-  const handleInvalid = () => {
-    setIsShaking(true);
-    setTimeout(() => setIsShaking(false), 600);
-  };
+  const shake = () => { setIsShaking(true); setTimeout(() => setIsShaking(false), 600); };
 
   const handleRegister = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
-    setIsShaking(false);
+    if (btnState === 'success') return; // already sent — prevent double-submit
 
+    // ── Field validation ────────────────────────────────────────────────────
     if (!name.trim() || !email.trim() || !password.trim()) {
-      setError('Please fill in all fields.');
-      handleInvalid();
-      return;
+      setError('Please fill in all fields.'); shake(); return;
     }
-
-    // ── Inline email format check ───────────────────────────────────────────
-    const localErr = validateEmail(email);
+    const localErr = validateEmailLocal(email);
     if (localErr) {
-      setEmailTouched(true);
-      setEmailError(localErr);
-      setEmailValid(false);
-      setError(localErr);
-      handleInvalid();
-      return;
+      setEmailTouched(true); setEmailError(localErr); setEmailValid(false);
+      setError(localErr); shake(); return;
+    }
+    if (password.length < 8) { setError('Password must be at least 8 characters.'); shake(); return; }
+
+    // ── Per-email block check ───────────────────────────────────────────────
+    const block = checkBlock(email);
+    if (block.permanent) {
+      setError('This email has been permanently blocked due to too many failed attempts. Please use a different email address.');
+      shake(); return;
+    }
+    if (block.blocked) {
+      setError(`Too many failed attempts. This email is blocked for ${block.minutesLeft} more minute(s). Please try a different email.`);
+      shake(); return;
     }
 
-    if (password.length < 8) {
-      setError('Password must be at least 8 characters.');
-      handleInvalid();
-      return;
-    }
+    // ── STEP 1: Check if email already exists in DB ─────────────────────────
+    setBtnState('loading');
+    try {
+      const API = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000/api/v1';
+      const existsRes = await fetch(`${API}/auth/check-email-exists?email=${encodeURIComponent(email.trim())}`);
+      if (existsRes.ok) {
+        const { exists } = await existsRes.json() as { exists: boolean };
+        if (exists) {
+          setBtnState('duplicate');
+          setError('An account with this email already exists. Please log in instead.');
+          shake();
+          // Reset after 4s so user can try a different email
+          setTimeout(() => { setBtnState('idle'); setError(''); }, 4000);
+          return;
+        }
+      }
+    } catch { /* fail open — proceed to registration attempt */ }
 
-    // ── DNS MX check — always runs on submit even if blur was skipped ───────
-    // Skip if we already confirmed valid via blur to avoid a duplicate call
+    // ── STEP 2: MX domain validation (if not yet done) ─────────────────────
     if (!emailValid) {
-      setEmailChecking(true);
+      setBtnState('checking');
       try {
         const API = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000/api/v1';
         const res = await fetch(`${API}/auth/check-email?email=${encodeURIComponent(email.trim())}`);
         if (res.ok) {
-          const data = (await res.json()) as { valid: boolean; reason?: string };
+          const data = await res.json() as { valid: boolean; reason?: string };
           if (!data.valid) {
-            const msg = data.reason ?? 'This email address cannot receive mail.';
-            setEmailTouched(true);
-            setEmailError(msg);
-            setEmailValid(false);
-            setError(msg);
-            handleInvalid();
-            setEmailChecking(false);
+            const msg = data.reason ?? 'This email cannot receive mail.';
+            setEmailTouched(true); setEmailError(msg); setEmailValid(false);
+            setError(msg); setBtnState('error'); shake();
+            setTimeout(() => setBtnState('idle'), 3000);
             return;
           }
-          setEmailValid(true);
-          setEmailError('');
+          setEmailValid(true); setEmailError('');
         }
-      } catch {
-        // Network error — fail open, let the server decide
-      } finally {
-        setEmailChecking(false);
-      }
+      } catch { /* fail open */ }
+      finally { setBtnState('loading'); } // hand off to submit phase
     }
 
-    setIsSubmitting(true);
+    // ── STEP 3: Register + send verification email ──────────────────────────
     try {
-      await register(email, password, name);
-      // redirect handled inside useAuth.register()
+      const result = await register(email, password, name);
+
+      // ✅ Email sent — show GREEN for 1.5s then redirect to verification page
+      setBtnState('success');
+      setTimeout(() => {
+        if (result.outcome === 'needsVerification') {
+          window.location.href = `/check-email?email=${encodeURIComponent(email)}`;
+        } else {
+          const baseUrl = process.env.NEXT_PUBLIC_APP_URL ?? 'http://localhost:3000';
+          window.location.href = `${baseUrl}/projects`;
+        }
+      }, 1500);
+
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Something went wrong. Please try again.';
+
+      // Duplicate from BetterAuth (race condition — user created between our check and signUp)
+      if (msg.toLowerCase().includes('already')) {
+        setBtnState('duplicate');
+        setError('An account with this email already exists. Please log in instead.');
+        shake();
+        setTimeout(() => { setBtnState('idle'); setError(''); }, 4000);
+        return;
+      }
+
+      // ❌ Email send failure or other error — show RED
+      setBtnState('error');
       setError(msg);
-      setIsSubmitting(false);
-      handleInvalid();
+      shake();
+      const rlResult = recordFail(email);
+      if (rlResult.permanent) {
+        setError('This email has been permanently blocked after too many failed attempts. Please use a different email address.');
+      } else if (rlResult.blocked) {
+        setError('Too many failed attempts. This email is blocked for 30 minutes. Please use a different email address.');
+      }
+      setTimeout(() => setBtnState('idle'), 3000);
     }
   };
 
+  // ── Derived flags (single source of truth) ────────────────────────────────
+  const emailChecking = btnState === 'checking';
+  const isSubmitting  = btnState === 'loading';
+
 
   return (
-    <div className={`${styles.page} ${styles.dark}`}>
+    <div className={`${styles.page} ${styles.dark} dark`}>
       <GooeyErrorFilter isError={isShaking} />
-    <div className={styles.splitLayout}>
+      <div className={styles.splitLayout}>
 
         {/* ── SPLIT BACK BUTTON ── */}
         <a
@@ -188,14 +254,10 @@ export default function RegisterPage() {
           </svg>
         </a>
 
-        {/* ── LEFT VIEW (Pattern & Navbar) ── */}
+        {/* ── LEFT VIEW ── */}
         <div className={styles.leftPane}>
           <div className={styles.patternOverlay} />
-
-          {/* ── STRIPE-STYLE TYPEWRITER ── */}
           <ApioTypeWriter />
-          
-          {/* ── CENTER COPY ── */}
           <div className={styles.rightCopy}>
             <div className={styles.introIcon}>
               <svg viewBox="0 0 24 24" fill="none" width="32" height="32">
@@ -208,7 +270,6 @@ export default function RegisterPage() {
             <h1 className={styles.introTitle}>Create your account</h1>
             <p className={styles.introSub}>Join Apio to monitor your APIs</p>
           </div>
-
           <header className={styles.navWrap}>
             <nav className={styles.nav}>
               <div className={styles.logo}>
@@ -220,33 +281,29 @@ export default function RegisterPage() {
               </div>
             </nav>
           </header>
-
-          {/* ── BOTTOM LINKS ── */}
           <div className={styles.rightUtilLinks}>
             <span className={styles.rightForgotLink}>Already have an account?</span>
-            <Link href="/login" className={styles.rightRegisterLink}>
-              Log in →
-            </Link>
+            <Link href="/login" className={styles.rightRegisterLink}>Log in →</Link>
           </div>
         </div>
 
-        {/* ── RIGHT VIEW (Form & Sparkles) ── */}
+        {/* ── RIGHT VIEW ── */}
         <div className={styles.rightPane}>
           <div className={styles.noiseOverlay} />
           <SpringBackground />
-
-          {/* ── MAIN ── */}
           <main className={styles.main}>
             <style dangerouslySetInnerHTML={{__html: `
-                .apio-autofill-transparent:-webkit-autofill,
-                .apio-autofill-transparent:-webkit-autofill:hover, 
-                .apio-autofill-transparent:-webkit-autofill:focus, 
-                .apio-autofill-transparent:-webkit-autofill:active {
-                    transition: background-color 5000s ease-in-out 0s, color 5000s ease-in-out 0s !important;
-                }
+              .apio-autofill-transparent:-webkit-autofill,
+              .apio-autofill-transparent:-webkit-autofill:hover,
+              .apio-autofill-transparent:-webkit-autofill:focus,
+              .apio-autofill-transparent:-webkit-autofill:active {
+                transition: background-color 5000s ease-in-out 0s, color 5000s ease-in-out 0s !important;
+              }
             `}} />
             <div className={styles.card}>
               <form className={styles.form} onSubmit={handleRegister} noValidate>
+
+                {/* Name */}
                 <div className={styles.field}>
                   <label className={styles.label} htmlFor="register-name">Full Name</label>
                   <div className={`${styles.input} ${styles.inputWrapper} ${isShaking ? styles.inputError : ''}`}>
@@ -258,15 +315,16 @@ export default function RegisterPage() {
                       value={name}
                       onChange={(e) => setName(e.target.value)}
                       autoComplete="name"
+                      disabled={isSubmitting}
+                      suppressHydrationWarning
                       style={{ width: '100%', border: 'none', outline: 'none', background: 'transparent', padding: 0, margin: 0, color: 'inherit', fontFamily: 'inherit', fontSize: 'inherit' }}
                     />
                   </div>
                 </div>
-                
+
+                {/* Email */}
                 <div className={styles.field}>
-                  <label className={styles.label} htmlFor="register-email">
-                    Email
-                  </label>
+                  <label className={styles.label} htmlFor="register-email">Email</label>
                   <div className={`${styles.input} ${styles.inputWrapper} ${isShaking && !email.trim() ? styles.inputError : ''} ${emailTouched && emailError && !emailChecking ? styles.inputError : ''}`}>
                     <input
                       id="register-email"
@@ -278,41 +336,23 @@ export default function RegisterPage() {
                       onBlur={handleEmailBlur}
                       autoComplete="email"
                       required
-                      disabled={emailChecking}
+                      disabled={emailChecking || isSubmitting}
                       aria-describedby={emailError ? 'email-error' : emailChecking ? 'email-checking' : undefined}
                       aria-invalid={emailTouched && !!emailError && !emailChecking}
+                      suppressHydrationWarning
                       style={{ width: '100%', border: 'none', outline: 'none', background: 'transparent', padding: 0, margin: 0, color: 'inherit', fontFamily: 'inherit', fontSize: 'inherit', opacity: emailChecking ? 0.6 : 1 }}
                     />
                   </div>
-
-                  {/* Checking spinner */}
                   {emailChecking && (
-                    <span
-                      id="email-checking"
-                      style={{
-                        display: 'flex', alignItems: 'center', gap: '5px',
-                        fontSize: '0.75rem', color: 'rgba(255,255,255,0.45)', fontWeight: 500,
-                        marginTop: '4px', paddingLeft: '2px',
-                      }}
-                    >
+                    <span id="email-checking" style={{ display: 'flex', alignItems: 'center', gap: '5px', fontSize: '0.75rem', color: 'rgba(255,255,255,0.45)', fontWeight: 500, marginTop: '4px', paddingLeft: '2px' }}>
                       <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" style={{ animation: 'spin 0.8s linear infinite', flexShrink: 0 }}>
                         <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/>
                       </svg>
                       Checking email domain…
                     </span>
                   )}
-
-                  {/* Error message */}
                   {emailTouched && emailError && !emailChecking && (
-                    <span
-                      id="email-error"
-                      role="alert"
-                      style={{
-                        display: 'flex', alignItems: 'center', gap: '4px',
-                        fontSize: '0.75rem', color: '#ef4444', fontWeight: 500,
-                        marginTop: '4px', paddingLeft: '2px',
-                      }}
-                    >
+                    <span id="email-error" role="alert" style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '0.75rem', color: '#ef4444', fontWeight: 500, marginTop: '4px', paddingLeft: '2px' }}>
                       <svg viewBox="0 0 16 16" fill="currentColor" width="12" height="12" style={{ flexShrink: 0 }}>
                         <path d="M8 1a7 7 0 1 0 0 14A7 7 0 0 0 8 1zm-.75 4a.75.75 0 0 1 1.5 0v3a.75.75 0 0 1-1.5 0V5zm.75 6.5a1 1 0 1 1 0-2 1 1 0 0 1 0 2z"/>
                       </svg>
@@ -321,19 +361,28 @@ export default function RegisterPage() {
                   )}
                 </div>
 
+                {/* Password */}
                 <div className={styles.field}>
                   <label className={styles.label} htmlFor="register-password">Password</label>
-                  <AnimatedPasswordInput
-                    id="register-password"
-                    wrapperClassName={`${styles.input} ${styles.passwordWrapper} ${isShaking ? styles.inputError : ''}`}
-                    placeholder="Min. 8 characters"
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    autoComplete="new-password"
-                    required
-                  />
+                  <div style={{ position: 'relative' }}>
+                    <AnimatedPasswordInput
+                      id="register-password"
+                      wrapperClassName={`${styles.input} ${styles.passwordWrapper} ${isShaking ? styles.inputError : ''}`}
+                      placeholder="6–15 characters"
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                      onFocus={() => setPasswordTouched(true)}
+                      autoComplete="new-password"
+                      required
+                    />
+                    <PasswordStrengthPanel
+                      password={password}
+                      visible={passwordTouched}
+                    />
+                  </div>
                 </div>
 
+                {/* Error banner */}
                 {error && (
                   <div role="alert" aria-live="polite" className={styles.errorBanner}>
                     <svg viewBox="0 0 20 20" fill="currentColor" width="14" height="14" style={{ flexShrink: 0, marginTop: '1px' }}>
@@ -343,30 +392,53 @@ export default function RegisterPage() {
                   </div>
                 )}
 
-                <GooeyButton 
-                  type="submit" 
-                  className={styles.submitBtn} 
+                {/* Submit button — wrapperClassName handles animation, className handles state colours */}
+                <GooeyButton
+                  type="submit"
+                  wrapperClassName={styles.submitBtnWrapper}
+                  className={[
+                    btnState === 'success'   ? styles.submitBtnSuccess   : '',
+                    btnState === 'error'     ? styles.submitBtnError     : '',
+                    btnState === 'duplicate' ? styles.submitBtnDuplicate : '',
+                  ].filter(Boolean).join(' ')}
                   isLoading={isSubmitting || emailChecking}
+                  disabled={isSubmitting || emailChecking || btnState === 'success'}
                   icon={
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-                      <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
-                      <circle cx="9" cy="7" r="4" />
-                      <line x1="19" y1="8" x2="19" y2="14" />
-                      <line x1="22" y1="11" x2="16" y2="11" />
-                    </svg>
+                    btnState === 'success' ? (
+                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                        <polyline points="20 6 9 17 4 12"/>
+                      </svg>
+                    ) : btnState === 'error' ? (
+                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                        <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+                      </svg>
+                    ) : btnState === 'duplicate' ? (
+                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                        <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>
+                      </svg>
+                    ) : (
+                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
+                        <circle cx="9" cy="7" r="4" />
+                        <line x1="19" y1="8" x2="19" y2="14" />
+                        <line x1="22" y1="11" x2="16" y2="11" />
+                      </svg>
+                    )
                   }
                 >
                   {emailChecking ? (
-                    <span className={styles.loaderContent}>
-                      <ButtonLogoSpinner />
-                      Verifying email…
-                    </span>
+                    <span className={styles.loaderContent}><ButtonLogoSpinner />Verifying email…</span>
                   ) : isSubmitting ? (
-                    <span className={styles.loaderContent}>
-                      <ButtonLogoSpinner />
-                      Creating account…
-                    </span>
-                  ) : 'Create Account'}
+                    <span className={styles.loaderContent}><ButtonLogoSpinner />Verifying &amp; sending…</span>
+                  ) : btnState === 'success' ? (
+                    '✓ Verification email sent!'
+                  ) : btnState === 'error' ? (
+                    'Failed — check details'
+                  ) : btnState === 'duplicate' ? (
+                    '! Account already exists'
+                  ) : (
+                    'Create Account'
+                  )}
                 </GooeyButton>
               </form>
 
@@ -377,14 +449,7 @@ export default function RegisterPage() {
               </div>
 
               <div className={styles.oauthRow}>
-                <GooeyButton
-                  type="button"
-                  className={styles.oauthBtn}
-                  wrapperClassName={styles.oauthBtnWrapper}
-                  aria-label="Sign up with Google"
-                  onClick={loginWithGoogle}
-                  disableGooeyFilter
-                >
+                <GooeyButton type="button" className={styles.oauthBtn} wrapperClassName={styles.oauthBtnWrapper} aria-label="Sign up with Google" onClick={loginWithGoogle} disableGooeyFilter>
                   <svg viewBox="0 0 24 24" width="18" height="18">
                     <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4"/>
                     <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/>
@@ -393,22 +458,13 @@ export default function RegisterPage() {
                   </svg>
                   Google
                 </GooeyButton>
-                
-                <GooeyButton
-                  type="button"
-                  className={styles.oauthBtn}
-                  wrapperClassName={styles.oauthBtnWrapper}
-                  aria-label="Sign up with GitHub"
-                  onClick={loginWithGitHub}
-                  disableGooeyFilter
-                >
+                <GooeyButton type="button" className={styles.oauthBtn} wrapperClassName={styles.oauthBtnWrapper} aria-label="Sign up with GitHub" onClick={loginWithGitHub} disableGooeyFilter>
                   <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor">
                     <path d="M12 .297c-6.63 0-12 5.373-12 12 0 5.303 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61C4.422 18.07 3.633 17.7 3.633 17.7c-1.087-.744.084-.729.084-.729 1.205.084 1.838 1.236 1.838 1.236 1.07 1.835 2.809 1.305 3.495.998.108-.776.417-1.305.76-1.605-2.665-.3-5.466-1.332-5.466-5.93 0-1.31.465-2.38 1.235-3.22-.135-.303-.54-1.523.105-3.176 0 0 1.005-.322 3.3 1.23.96-.267 1.98-.399 3-.405 1.02.006 2.04.138 3 .405 2.28-1.552 3.285-1.23 3.285-1.23.645 1.653.24 2.873.12 3.176.765.84 1.23 1.91 1.23 3.22 0 4.61-2.805 5.625-5.475 5.92.42.36.81 1.096.81 2.22 0 1.606-.015 2.896-.015 3.286 0 .315.21.69.825.57C20.565 22.092 24 17.592 24 12.297c0-6.627-5.373-12-12-12"/>
                   </svg>
                   GitHub
                 </GooeyButton>
               </div>
-
             </div>
           </main>
         </div>

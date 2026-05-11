@@ -2,10 +2,12 @@
 
 import { useSearchParams } from 'next/navigation';
 import { useQuery } from '@tanstack/react-query';
+import { toast } from 'sonner';
 import ProjectSidebar from '@/components/ProjectSidebar/ProjectSidebar';
 import styles from './DashboardPage.module.scss';
 import { Shimmer, ShimmerBlock, ShimmerRow } from '@/components/Shimmer/Shimmer';
 import { ChevronDown, Activity, Zap, AlertTriangle, Layers, RotateCw } from 'lucide-react';
+import { useEffect } from 'react';
 import {
   queryKeys,
   fetchProjects,
@@ -59,20 +61,23 @@ export default function DashboardPage() {
     queryFn: () => fetchProjectStats(resolvedProjectId),
     enabled: !!resolvedProjectId,
     refetchInterval: 30_000,
-    staleTime: 15_000,
+    staleTime: 30_000, // match refetchInterval — no redundant fetch on mount
   });
 
-  const { data: recentCalls } = useQuery({
-    queryKey: queryKeys.projects.calls(resolvedProjectId, 20),
-    queryFn: () => fetchRecentCalls(resolvedProjectId, 20),
+  // Use limit=50 (same key as OverviewPage) — React Query deduplicates. Slice to 20 client-side.
+  const { data: recentCallsFull } = useQuery({
+    queryKey: queryKeys.projects.calls(resolvedProjectId, 50),
+    queryFn: () => fetchRecentCalls(resolvedProjectId, 50),
     enabled: !!resolvedProjectId,
     refetchInterval: 15_000,
-    staleTime: 10_000,
+    staleTime: 15_000,
   });
+  const recentCalls = (recentCallsFull ?? []).slice(0, 20);
 
-  if (project?.id && typeof window !== 'undefined') {
-    localStorage.setItem('activeProjectId', project.id);
-  }
+  // Persist active project — in useEffect to avoid render side-effects
+  useEffect(() => {
+    if (project?.id) localStorage.setItem('activeProjectId', project.id);
+  }, [project?.id]);
 
   const projectId   = project?.id ?? resolvedProjectId;
   const projectName = project?.name ?? '';
@@ -166,7 +171,16 @@ export default function DashboardPage() {
               </div>
               <div className={styles.urlRow}>
                 <span className={styles.url}>{projectUrl}</span>
-                <button className={styles.copyBtn}>
+                <button
+                  className={styles.copyBtn}
+                  onClick={() => {
+                    void navigator.clipboard.writeText(projectUrl).then(() => {
+                      toast.success('URL copied to clipboard');
+                    }).catch(() => {
+                      toast.error('Failed to copy URL');
+                    });
+                  }}
+                >
                   Copy <ChevronDown size={14} />
                 </button>
               </div>

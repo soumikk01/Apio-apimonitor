@@ -4,7 +4,14 @@
  */
 import { fetchWithAuth } from './fetchWithAuth';
 
-const API = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000/api/v1';
+/**
+ * Single source of truth for the backend API base URL.
+ * Import this constant instead of redeclaring it in every file.
+ */
+export const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000/api/v1';
+
+// Internal alias kept for backward compat within this file
+const API = API_BASE;
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
