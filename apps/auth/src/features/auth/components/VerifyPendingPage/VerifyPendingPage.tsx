@@ -36,7 +36,9 @@ export default function VerifyPendingPage({ token, email }: Props) {
         if (res.ok) {
           setStatus('success');
           setTimeout(() => {
-            window.location.href = '/login?registered=true';
+            const params = new URLSearchParams({ verified: 'true' });
+            if (email) params.set('email', email);
+            window.location.href = `/login?${params.toString()}`;
           }, 2000);
         } else if (res.status === 404) {
           setStatus('expired');
