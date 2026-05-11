@@ -430,33 +430,33 @@ const _auth: any = betterAuth({
           const apiKey = process.env.SMTP_PASS;
           if (!apiKey) return;
 
-          // Brief delay so verifyPendingRegistration can write its Account row
-          await new Promise<void>((resolve) => setTimeout(resolve, 300));
-
-          try {
-            if (user.id) {
-              const credAccount = await _rawPrisma.account.findFirst({
-                where: { userId: user.id, providerId: 'credential' },
-                select: { id: true },
-              });
-              // credential account exists → preRegister user → skip
-              if (credAccount) return;
+          // Fire email asynchronously — never delay the auth response
+          setImmediate(async () => {
+            try {
+              if (user.id) {
+                const credAccount = await _rawPrisma.account.findFirst({
+                  where: { userId: user.id, providerId: 'credential' },
+                  select: { id: true },
+                });
+                // credential account exists → preRegister user → skip
+                if (credAccount) return;
+              }
+            } catch {
+              // DB check failed — proceed to avoid missing OAuth welcome
             }
-          } catch {
-            // DB check failed — proceed to avoid missing OAuth welcome
-          }
 
-          const name = user.name ?? user.email.split('@')[0];
-          const from = process.env.EMAIL_FROM ?? 'Apio <noreply@apio.one>';
-          const dash = (process.env.FRONTEND_URL ?? 'https://apio.one') + '/projects';
-          const html = welcomeTemplate(name, dash);
+            const name = user.name ?? user.email.split('@')[0];
+            const from = process.env.EMAIL_FROM ?? 'Apio <noreply@apio.one>';
+            const dash = (process.env.FRONTEND_URL ?? 'https://apio.one') + '/projects';
+            const html = welcomeTemplate(name, dash);
 
-          // Non-blocking — never delay OAuth redirect
-          fetch('https://api.resend.com/emails', {
-            method: 'POST',
-            headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
-            body: JSON.stringify({ from, to: [user.email], subject: 'Welcome to Apio!', html }),
-          }).catch(() => { /* non-critical — never throw */ });
+            // Non-blocking — never delay OAuth redirect
+            fetch('https://api.resend.com/emails', {
+              method: 'POST',
+              headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+              body: JSON.stringify({ from, to: [user.email], subject: 'Welcome to Apio!', html }),
+            }).catch(() => { /* non-critical — never throw */ });
+          });
         },
       },
     },

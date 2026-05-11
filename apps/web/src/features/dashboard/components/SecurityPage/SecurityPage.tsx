@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useAuth } from '@/hooks/useAuth';
 import { authStorage, fetchWithAuth } from '@/lib/fetchWithAuth';
+import { toast } from 'sonner';
 import styles from './SecurityPage.module.scss';
 
 const BETTER_AUTH = process.env.NEXT_PUBLIC_API_URL
@@ -94,6 +95,7 @@ export default function SecurityPage() {
         credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ password }),
+        signal: AbortSignal.timeout(12_000), // 12s timeout — prevents infinite loading
       });
       const data = await safeJson(res);
       if (!res.ok) {
@@ -103,7 +105,11 @@ export default function SecurityPage() {
       setPassword('');
       setStep('totp-verify');
     } catch (e) {
-      setErrorMsg(e instanceof Error ? e.message : 'An unexpected error occurred. Please try again.');
+      if ((e as Error).name === 'TimeoutError') {
+        setErrorMsg('Request timed out. Please check your connection and try again.');
+      } else {
+        setErrorMsg(e instanceof Error ? e.message : 'An unexpected error occurred. Please try again.');
+      }
     } finally { setSaving(false); }
   };
 
@@ -117,6 +123,7 @@ export default function SecurityPage() {
         credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ code: totpCode }),
+        signal: AbortSignal.timeout(12_000),
       });
       const data = await safeJson(res);
       if (!res.ok) {
@@ -125,8 +132,13 @@ export default function SecurityPage() {
       setIs2FAEnabled(true);
       setStep('success');
       setSuccessMsg('Two-factor authentication is now active!');
+      toast.success('2FA enabled successfully! Your account is now more secure.');
     } catch (e) {
-      setErrorMsg(e instanceof Error ? e.message : 'Verification failed. Please try again.');
+      if ((e as Error).name === 'TimeoutError') {
+        setErrorMsg('Request timed out. Please check your connection and try again.');
+      } else {
+        setErrorMsg(e instanceof Error ? e.message : 'Verification failed. Please try again.');
+      }
     } finally { setSaving(false); }
   };
 
@@ -141,6 +153,7 @@ export default function SecurityPage() {
         credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ password }),
+        signal: AbortSignal.timeout(12_000),
       });
       const data = await safeJson(res);
       if (!res.ok) {
@@ -150,9 +163,14 @@ export default function SecurityPage() {
       setStep('idle');
       clearForm();
       setSuccessMsg('Two-factor authentication has been disabled successfully.');
+      toast.success('2FA has been disabled.');
       setTimeout(() => setSuccessMsg(''), 5000);
     } catch (e) {
-      setErrorMsg(e instanceof Error ? e.message : 'Failed to disable 2FA. Please try again.');
+      if ((e as Error).name === 'TimeoutError') {
+        setErrorMsg('Request timed out. Please check your connection and try again.');
+      } else {
+        setErrorMsg(e instanceof Error ? e.message : 'Failed to disable 2FA. Please try again.');
+      }
     } finally { setSaving(false); }
   };
 

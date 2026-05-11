@@ -1,11 +1,12 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import { useQuery, useMutation } from '@tanstack/react-query';
 import { useAuth } from '@/hooks/useAuth';
 import { fetchWithAuth } from '@/lib/fetchWithAuth';
 import { queryClient } from '@/lib/queryClient';
+import { toast } from 'sonner';
 import { queryKeys, fetchProjects as fetchProjectsList, type Project } from '@/lib/queries';
 import styles from './ProjectsPage.module.scss';
 
@@ -133,12 +134,16 @@ export default function ProjectsPage() {
     },
     onSuccess: (created) => {
       void queryClient.invalidateQueries({ queryKey: queryKeys.projects.list() });
+      toast.success('Project created successfully');
       setShowModal(false);
       setNewName('');
       setNewDesc('');
       router.push(`/services?projectId=${created.id}`);
     },
-    onError: (err: Error) => setCreateError(err.message),
+    onError: (err: Error) => {
+      setCreateError(err.message);
+      toast.error(err.message);
+    },
   });
 
   // ── Delete project mutation ───────────────────────────────────────────────
@@ -148,8 +153,10 @@ export default function ProjectsPage() {
     },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: queryKeys.projects.list() });
+      toast.success('Project deleted');
       setDeleteTarget(null);
     },
+    onError: () => toast.error('Failed to delete project'),
   });
 
   // ── Rename / update project mutation ─────────────────────────────────────
@@ -167,9 +174,13 @@ export default function ProjectsPage() {
     },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: queryKeys.projects.list() });
+      toast.success('Project updated');
       setEditTarget(null);
     },
-    onError: (err: Error) => setEditError(err.message),
+    onError: (err: Error) => {
+      setEditError(err.message);
+      toast.error(err.message);
+    },
   });
 
   /* ── close menu on outside click ── */
@@ -206,12 +217,15 @@ export default function ProjectsPage() {
   };
 
   /* ── filtered + sorted list ── */
-  const filtered = projects
-    .filter(p => p.name.toLowerCase().includes(search.toLowerCase()))
-    .sort((a, b) => {
-      if (sort === 'name') return a.name.localeCompare(b.name);
-      return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
-    });
+  const filtered = useMemo(() =>
+    projects
+      .filter(p => p.name.toLowerCase().includes(search.toLowerCase()))
+      .sort((a, b) => {
+        if (sort === 'name') return a.name.localeCompare(b.name);
+        return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+      }),
+    [projects, search, sort]
+  );
 
   const initials = (name: string) => name.slice(0, 2).toUpperCase();
 

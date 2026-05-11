@@ -1,6 +1,7 @@
 'use client';
 import { useState, useCallback, useEffect } from 'react';
 import { fetchWithAuth } from '@/lib/fetchWithAuth';
+import { toast } from 'sonner';
 import { RefreshCw } from 'lucide-react';
 import { format } from 'date-fns';
 import { Shimmer } from '@/components/Shimmer/Shimmer';
@@ -22,23 +23,32 @@ interface AuditLog {
 export default function AccountAuditPage() {
   const [logs, setLogs] = useState<AuditLog[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState('');
   const [projectsList, setProjectsList] = useState<{ id: string; name: string }[]>([]);
   const [selectedProject, setSelectedProject] = useState<string>('');
 
-  const loadLogs = useCallback(async () => {
+  // ── Fetch audit logs — accepts an AbortSignal so previous requests are cancelled
+  // when the filter changes, preventing race conditions / stale responses.
+  const loadLogs = useCallback(async (signal?: AbortSignal) => {
     setLoading(true);
+    setLoadError('');
     try {
       const url = new URL(`${API}/audit`);
       if (selectedProject) {
         url.searchParams.set('projectId', selectedProject);
       }
-      const res = await fetchWithAuth(url.toString());
+      const res = await fetchWithAuth(url.toString(), { signal });
       if (res.ok) {
         const data = await res.json();
         setLogs(data.data || []);
+      } else {
+        throw new Error(`Server error ${res.status}`);
       }
     } catch (err) {
-      console.error('Failed to load audit logs', err);
+      if ((err as Error).name === 'AbortError') return; // filter changed — ignore stale response
+      const msg = (err as Error).message || 'Failed to load audit logs';
+      setLoadError(msg);
+      toast.error(msg);
     } finally {
       setLoading(false);
     }
@@ -60,8 +70,11 @@ export default function AccountAuditPage() {
     void loadProjects();
   }, [loadProjects]);
 
+  // Cancel previous request automatically when selectedProject changes
   useEffect(() => {
-    void loadLogs();
+    const controller = new AbortController();
+    void loadLogs(controller.signal);
+    return () => controller.abort();
   }, [loadLogs]);
 
   // Try to define a default date range string just to match UI mockup
@@ -97,7 +110,7 @@ export default function AccountAuditPage() {
             <span className={styles.filterText} style={{ margin: '0 0.5rem' }}>•</span>
             <span className={styles.filterText}>Viewing {logs.length} logs in total</span>
             
-            <button className={styles.refreshBtn} onClick={() => void loadLogs()} disabled={loading}>
+            <button className={styles.refreshBtn} onClick={() => { const c = new AbortController(); void loadLogs(c.signal); }} disabled={loading}>
               <RefreshCw size={14} style={loading ? { animation: 'spin 1s linear infinite' } : {}} />
               Refresh
             </button>

@@ -1,5 +1,6 @@
 'use client';
 
+import { useEffect } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { useQuery } from '@tanstack/react-query';
 import Link from 'next/link';
@@ -69,7 +70,7 @@ export default function OverviewPage() {
     queryFn: () => fetchProjectStats(resolvedProjectId),
     enabled: !!resolvedProjectId,
     staleTime: 30_000,
-    refetchInterval: 30_000, // auto-refresh every 30s
+    refetchInterval: 30_000,
   });
 
   // ── Recent calls — 15s stale time, seeds the traffic feed ──────────────────
@@ -81,10 +82,10 @@ export default function OverviewPage() {
     refetchInterval: 15_000,
   });
 
-  // Persist active project
-  if (project?.id && typeof window !== 'undefined') {
-    localStorage.setItem('activeProjectId', project.id);
-  }
+  // Persist active project — in useEffect to avoid render side-effects
+  useEffect(() => {
+    if (project?.id) localStorage.setItem('activeProjectId', project.id);
+  }, [project?.id]);
 
   const projectId = project?.id ?? resolvedProjectId;
   const projectName = project?.name ?? '';
