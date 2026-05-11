@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useAuth } from '@/hooks/useAuth';
-import { authStorage } from '@/lib/fetchWithAuth';
+import { authStorage, fetchWithAuth } from '@/lib/fetchWithAuth';
 import styles from './SecurityPage.module.scss';
 
 const BETTER_AUTH = process.env.NEXT_PUBLIC_API_URL
@@ -44,9 +44,7 @@ export default function SecurityPage() {
     const token = authStorage.getAccessToken();
     if (!token) return;
     try {
-      const res = await fetch(`${API}/users/me`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
+      const res = await fetchWithAuth(`${API}/users/me`);
       if (res.ok) {
         const data = await res.json() as { twoFactorEnabled?: boolean };
         setIs2FAEnabled(data.twoFactorEnabled ?? false);
@@ -125,7 +123,6 @@ export default function SecurityPage() {
         throw new Error(friendlyError(data.code as string, res.status, 'The code is incorrect or expired. Please check your app and try again.'));
       }
       setIs2FAEnabled(true);
-      setTwoFactorMethod('totp');
       setStep('success');
       setSuccessMsg('Two-factor authentication is now active!');
     } catch (e) {

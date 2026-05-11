@@ -1,5 +1,5 @@
 'use client';
-import { authStorage } from '@/lib/fetchWithAuth';
+import { authStorage, fetchWithAuth } from '@/lib/fetchWithAuth';
 
 import { useState, useEffect, useCallback } from 'react';
 
@@ -71,11 +71,10 @@ export default function AccountPage() {
     if (pendingAvatar === savedAvatar) { closePicker(); return; }
     setSavingAvatar(true);
     setAvatarSaveStatus('idle');
-    const token = authStorage.getAccessToken();
     try {
-      const res = await fetch(`${API}/users/me/avatar`, {
+      const res = await fetchWithAuth(`${API}/users/me/avatar`, {
         method: 'PATCH',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ avatar: pendingAvatar }),
       });
       if (!res.ok) throw new Error('Failed');
@@ -98,7 +97,7 @@ export default function AccountPage() {
     if (!token) return;
     setIsLoading(true);
     try {
-      const pRes = await fetch(`${API}/projects`, { headers: { Authorization: `Bearer ${token}` } });
+      const pRes = await fetchWithAuth(`${API}/projects`);
       if (pRes.ok) {
         const projects = await pRes.json() as unknown[];
         setStats(s => ({ ...s, totalProjects: projects.length }));

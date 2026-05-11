@@ -1,6 +1,6 @@
 'use client';
 import { useState, useCallback, useEffect } from 'react';
-import { authStorage } from '@/lib/fetchWithAuth';
+import { fetchWithAuth } from '@/lib/fetchWithAuth';
 import { RefreshCw } from 'lucide-react';
 import { format } from 'date-fns';
 import { Shimmer } from '@/components/Shimmer/Shimmer';
@@ -27,15 +27,12 @@ export default function AccountAuditPage() {
 
   const loadLogs = useCallback(async () => {
     setLoading(true);
-    const token = authStorage.getAccessToken();
     try {
       const url = new URL(`${API}/audit`);
       if (selectedProject) {
         url.searchParams.set('projectId', selectedProject);
       }
-      const res = await fetch(url.toString(), {
-        headers: { Authorization: `Bearer ${token}` },
-      });
+      const res = await fetchWithAuth(url.toString());
       if (res.ok) {
         const data = await res.json();
         setLogs(data.data || []);
@@ -48,11 +45,8 @@ export default function AccountAuditPage() {
   }, [selectedProject]);
 
   const loadProjects = useCallback(async () => {
-    const token = authStorage.getAccessToken();
     try {
-      const res = await fetch(`${API}/projects`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
+      const res = await fetchWithAuth(`${API}/projects`);
       if (res.ok) {
         const data = await res.json();
         setProjectsList(data);
