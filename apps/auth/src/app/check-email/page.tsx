@@ -200,8 +200,8 @@ function CheckEmailContent() {
           if (data.exists && !stopped) {
             stopped = true;
             sessionStorage.removeItem(storageKey);
-            const params = new URLSearchParams({ verified: 'true', email });
-            window.location.href = `/login?${params.toString()}`;
+            const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? 'http://localhost:3000';
+            window.location.href = `${appUrl}/projects`;
           }
         }
       } catch {
