@@ -10,7 +10,7 @@
 #    └──────────┬──────────┘
 #               │
 #    ┌──────────▼──────────┐
-#    │  deploy-railway     │  Trigger Railway redeploy via webhook
+#    │  deploy-vps         │  SSH → docker compose pull + up (Redis + backend)
 #    └──────────┬──────────┘
 #               │
 #    ┌──────────▼──────────┐
@@ -18,9 +18,19 @@
 #    └──────────┬──────────┘
 #               │
 #    ┌──────────▼──────────┐
-#    │  smoke-test         │  Hit /health on the live backend
+#    │  smoke-test         │  Hit /health on the live VPS backend
 #    └─────────────────────┘
 #
+# Required GitHub Secrets:
+#   VPS_HOST               — VPS IP or domain (e.g. 123.456.789.0)
+#   VPS_USER               — SSH user (e.g. ubuntu, root)
+#   VPS_SSH_KEY            — contents of your private SSH key (~/.ssh/id_rsa)
+#   VPS_PUBLIC_URL         — backend public URL (e.g. https://api.apio.one)
+#   VERCEL_TOKEN           — Vercel personal access token
+#   VERCEL_ORG_ID          — Vercel org/team ID
+#   VERCEL_WEB_PROJECT_ID  — Vercel project ID for apps/web
+#   VERCEL_AUTH_PROJECT_ID — Vercel project ID for apps/auth
+#   VERCEL_WEB_URL         — public URL of web frontend (for smoke test)
 # ─────────────────────────────────────────────────────────────────────────────
 
 name: CD
@@ -73,7 +83,6 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # Generate tags: latest + branch + short SHA
       - name: Docker metadata
         id: meta
         uses: docker/metadata-action@v5
@@ -104,34 +113,52 @@ jobs:
           echo "|-----|--------|" >> $GITHUB_STEP_SUMMARY
           echo "| \`latest\` | \`${{ steps.build.outputs.digest }}\` |" >> $GITHUB_STEP_SUMMARY
 
-  # ── 2. Deploy Backend — Railway ───────────────────────────────────────────────
-  deploy-railway:
-    name: 🚂 Deploy Backend (Railway)
+  # ── 2. Deploy Backend — Cloud VPS (docker compose) ───────────────────────────
+  # Redis container keeps running during deploys — only backend containers restart.
+  # This means zero cache loss and no cold-start penalty on each deploy.
+  deploy-vps:
+    name: 🖥️ Deploy Backend (VPS)
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     needs: [build-and-publish]
-    # environment: production  # Uncomment after creating this in GitHub → Settings → Environments
 
     steps:
-      - name: Trigger Railway deployment via webhook
-        run: |
-          curl --fail --silent --show-error \
-            -X POST "${{ secrets.RAILWAY_DEPLOY_WEBHOOK }}" \
-            -H "Content-Type: application/json"
+      - name: Deploy to VPS via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host:     ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key:      ${{ secrets.VPS_SSH_KEY }}
+          script: |
+            echo "🔐 Logging into GHCR..."
+            echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io \
+              -u ${{ github.actor }} --password-stdin
 
-      - name: Wait for Railway to come up
-        run: |
-          echo "Waiting 30s for Railway to restart..."
-          sleep 30
+            echo "📦 Pulling latest backend image..."
+            docker pull ghcr.io/${{ env.IMAGE_NAME }}:latest
+
+            echo "🔄 Restarting backend containers (Redis stays up)..."
+            cd /opt/apio
+
+            # Only restart backend containers — Redis is NOT restarted so the
+            # cache (rate-limit counters, query cache, Socket.io state) is preserved.
+            docker compose --env-file /etc/apio/.env up -d --no-deps \
+              nestjs_1 nestjs_2 worker
+
+            echo "✅ Deploy complete — container status:"
+            docker compose --env-file /etc/apio/.env ps
+
+      - name: Wait for backend to initialize
+        run: sleep 20
 
       - name: Verify backend health
         run: |
           curl --fail --silent --show-error \
             --max-time 15 \
-            --retry 6 \
+            --retry 5 \
             --retry-delay 10 \
             --retry-connrefused \
-            "${{ secrets.RAILWAY_PUBLIC_URL }}/health" | jq .
+            "${{ secrets.VPS_PUBLIC_URL }}/health" | jq .
 
   # ── 3. Deploy Frontend — Vercel (web + auth) ──────────────────────────────────
   deploy-vercel:
@@ -141,8 +168,6 @@ jobs:
     needs: [build-and-publish]
 
     steps:
-      # Vercel handles its own builds via Git integration.
-      # This step confirms the deployment completed using the Vercel CLI.
       - uses: actions/checkout@v4
 
       - name: Install Vercel CLI
@@ -175,15 +200,15 @@ jobs:
     name: 🔥 Smoke Test
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    needs: [deploy-railway, deploy-vercel]
+    needs: [deploy-vps, deploy-vercel]
 
     steps:
       - name: Backend health check
         run: |
-          echo "Testing: ${{ secrets.RAILWAY_PUBLIC_URL }}/health"
+          echo "Testing: ${{ secrets.VPS_PUBLIC_URL }}/health"
           curl --fail --silent --show-error \
             --max-time 10 \
-            "${{ secrets.RAILWAY_PUBLIC_URL }}/health" | jq .
+            "${{ secrets.VPS_PUBLIC_URL }}/health" | jq .
 
       - name: Frontend availability check
         run: |
@@ -200,6 +225,6 @@ jobs:
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "| Service | URL | Status |" >> $GITHUB_STEP_SUMMARY
           echo "|---------|-----|--------|" >> $GITHUB_STEP_SUMMARY
-          echo "| Backend  | ${{ secrets.RAILWAY_PUBLIC_URL }} | ✅ Live |" >> $GITHUB_STEP_SUMMARY
-          echo "| Web App  | ${{ secrets.VERCEL_WEB_URL }}    | ✅ Live |" >> $GITHUB_STEP_SUMMARY
+          echo "| Backend  | ${{ secrets.VPS_PUBLIC_URL }}  | ✅ Live |" >> $GITHUB_STEP_SUMMARY
+          echo "| Web App  | ${{ secrets.VERCEL_WEB_URL }} | ✅ Live |" >> $GITHUB_STEP_SUMMARY
           echo "| Commit   | ${{ github.sha }} | deployed |" >> $GITHUB_STEP_SUMMARY
