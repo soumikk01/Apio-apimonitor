@@ -35,11 +35,6 @@ export default function VerifyPendingPage({ token, email }: Props) {
         const body = await res.json().catch(() => ({ message: '' })) as { message?: string; success?: boolean };
         if (res.ok) {
           setStatus('success');
-          setTimeout(() => {
-            const params = new URLSearchParams({ verified: 'true' });
-            if (email) params.set('email', email);
-            window.location.href = `/login?${params.toString()}`;
-          }, 2000);
         } else if (res.status === 404) {
           setStatus('expired');
           setMessage(body.message ?? 'Verification link expired. Please register again.');
@@ -84,7 +79,7 @@ export default function VerifyPendingPage({ token, email }: Props) {
         <>
           <div style={{ fontSize: '2.5rem', marginBottom: '1rem' }}>✅</div>
           <h1 style={{ fontSize: '1.6rem', marginBottom: '0.5rem' }}>Account created!</h1>
-          <p style={{ color: '#888' }}>Your account has been verified and created. Redirecting to login…</p>
+          <p style={{ color: '#888' }}>Your email is verified. You can close this tab and sign in.</p>
         </>
       )}
 
