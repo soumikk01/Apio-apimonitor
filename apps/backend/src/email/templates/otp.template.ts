@@ -2,82 +2,66 @@ import { baseTemplate, footerNote } from './base.template';
 
 export type OtpType = 'sign-in' | 'email-verification' | 'forget-password';
 
-const OTP_COPY: Record<OtpType, { heading: string; sub: string }> = {
+const OTP_COPY: Record<OtpType, { heading: string; sub: string; expiry: string }> = {
   'sign-in': {
-    heading: 'Your Sign-in verification Code',
+    heading: 'Your sign-in code',
     sub: 'Use this code to complete your sign-in.',
+    expiry: '5 minutes',
   },
   'email-verification': {
-    heading: 'Your Signup verification Code',
+    heading: 'Your verification code',
     sub: 'Use this code to verify your Apio account.',
+    expiry: '5 minutes',
   },
   'forget-password': {
-    heading: 'Your Password Reset Code',
+    heading: 'Your password reset code',
     sub: 'Use this code to reset your password.',
+    expiry: '5 minutes',
   },
 };
 
 export function otpTemplate(otp: string, type: OtpType): string {
-  const { heading, sub } = OTP_COPY[type];
+  const { heading, sub, expiry } = OTP_COPY[type];
 
-  // Split OTP into individual digits for the spaced display
+  // Each digit as a spaced cell
   const digits = otp
     .split('')
     .map(
       (d) =>
-        `<td style="padding:0 6px;">
-       <span style="font-size:32px;font-weight:700;color:#1e1b4b;letter-spacing:0;">${d}</span>
-     </td>`,
+        `<td style="padding:0 5px;">
+           <span style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;
+                        font-size:36px;font-weight:700;color:#18181b;letter-spacing:0;line-height:1;">${d}</span>
+         </td>`,
     )
     .join('');
 
   const content = `
     <!-- Heading -->
-    <h1 style="margin:0 0 20px;font-size:20px;font-weight:700;color:#1e1b4b;
-               text-align:center;line-height:1.4;letter-spacing:-0.2px;">
+    <h1 style="margin:0 0 8px;
+               font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;
+               font-size:22px;font-weight:700;color:#18181b;
+               line-height:1.3;letter-spacing:-0.3px;">
       ${heading}
     </h1>
+    <p style="margin:0 0 28px;
+              font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;
+              font-size:14px;color:#71717a;line-height:1.6;">
+      ${sub}
+    </p>
 
-    <!-- OTP digits (spaced like reference) -->
+    <!-- OTP digits -->
     <table role="presentation" cellpadding="0" cellspacing="0" border="0"
-           style="margin:0 auto 16px;">
+           style="margin:0 0 8px;">
       <tr>${digits}</tr>
     </table>
 
-    <p style="margin:0 0 24px;font-size:12px;color:#94a3b8;text-align:center;">
-      Don't share this code to anyone!
+    <p style="margin:0 0 28px;
+              font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;
+              font-size:12px;color:#a1a1aa;line-height:1.6;">
+      Do not share this code with anyone.
     </p>
 
-    <!-- Warning box -->
-    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"
-           style="margin-bottom:20px;">
-      <tr>
-        <td bgcolor="#fffbeb"
-          style="background-color:#fffbeb;border:1px solid #fde68a;
-                 border-radius:10px;padding:14px 16px;">
-          <table role="presentation" cellpadding="0" cellspacing="0" border="0">
-            <tr>
-              <td valign="top" style="padding-right:10px;font-size:16px;">⚠️</td>
-              <td>
-                <p style="margin:0 0 4px;font-size:13px;font-weight:600;color:#92400e;">
-                  Was this request not made by you?
-                </p>
-                <p style="margin:0;font-size:12px;color:#b45309;line-height:1.6;">
-                  If you did not initiate this request, you can safely
-                  <strong>ignore this email</strong>.
-                </p>
-              </td>
-            </tr>
-          </table>
-        </td>
-      </tr>
-    </table>
-
-    <p style="margin:0;font-size:12px;color:#94a3b8;text-align:center;line-height:1.6;">
-      This is an automated message. <strong style="color:#64748b;">Please do not reply.</strong>
-    </p>
-
-    ${footerNote(`Expires in <strong>5 minutes</strong>. ${sub}`)}
+    ${footerNote(`Expires in <strong style="color:#52525b;">${expiry}</strong>. If you did not request this, you can safely ignore this email.`)}
   `;
 
   return baseTemplate(content);

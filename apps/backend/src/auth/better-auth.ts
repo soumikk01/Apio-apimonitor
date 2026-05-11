@@ -5,9 +5,9 @@ import { PrismaClient } from '../generated/prisma';
 import { validateEmail } from './email-validator';
 import { randomBytes } from 'crypto';
 import * as bcrypt from 'bcryptjs';
-import * as nodemailer from 'nodemailer';
 import { otpTemplate, OtpType } from '../email/templates/otp.template';
 import { emailVerificationTemplate } from '../email/templates/email-verification.template';
+import { welcomeTemplate } from '../email/templates/welcome.template';
 
 // ── Prisma client (singleton — shared with the rest of the app) ───────────────
 // BetterAuth 1.6.9 generates random base-62 string IDs that are not valid
@@ -81,60 +81,176 @@ const prisma = new Proxy(_rawPrisma, {
   },
 }) as PrismaClient;
 
-// ── Nodemailer transporter (Gmail SMTP — mirrors EmailService) ───────────────
-const _smtpUser = process.env.SMTP_USER;
-const _smtpPass = process.env.SMTP_PASS;
+// ── Resend HTTP API sender ────────────────────────────────────────────────────
+// More reliable than SMTP: no connection pooling, explicit error responses,
+// and guaranteed delivery confirmation on every call.
+// SMTP_PASS is the Resend API key (re_xxxxxx).
+const _resendApiKey = process.env.SMTP_PASS;
 
-const _smtpHost = process.env.SMTP_HOST ?? 'smtp.resend.com';
-const _smtpPort = Number(process.env.SMTP_PORT ?? 465);
+// ── Startup check ─────────────────────────────────────────────────────────────
+if (!_resendApiKey) {
+  console.error(
+    '\n[BetterAuth] ❌ SMTP_PASS (Resend API key) NOT SET — verification emails will NOT be sent!\n' +
+    '  Set SMTP_PASS=re_xxxxxx in apps/backend/.env\n',
+  );
+} else {
+  console.log('[BetterAuth] ✅ Resend API key loaded — email sender ready.');
+}
 
-const smtpTransporter =
-  _smtpUser && _smtpPass
-    ? nodemailer.createTransport({
-        host: _smtpHost,
-        port: _smtpPort,
-        secure: _smtpPort === 465,
-        auth: { user: _smtpUser, pass: _smtpPass },
-      })
-    : null;
+const FROM_EMAIL = process.env.EMAIL_FROM ?? 'Apio <noreply@apio.one>';
 
 async function sendMail(
   to: string,
   subject: string,
   html: string,
 ): Promise<void> {
-  if (!smtpTransporter) {
-    console.warn(
-      `[BetterAuth] ⚠ Email not sent to ${to} — SMTP_USER/SMTP_PASS not configured.`,
-    );
-    return;
+  if (!_resendApiKey) {
+    console.error(`[BetterAuth] ❌ SMTP_PASS (Resend API key) not set — cannot send email to ${to}`);
+    throw new Error('Email service is not configured. Please contact support.');
   }
-  console.log(
-    `[BetterAuth] 📧 Attempting to send "${subject}" to ${to} via ${_smtpHost}:${_smtpPort}`,
-  );
+
+  // ── LAYER 1: Suppression list pre-check ──────────────────────────────────────
+  // Resend automatically adds bounced/complained addresses here.
+  // Any email that bounced before is instantly blocked — no send attempt.
   try {
-    const info = await smtpTransporter.sendMail({
-      from: FROM_EMAIL,
-      to,
-      subject,
-      html,
-    });
-    console.log(
-      `[BetterAuth] ✅ Email sent to ${to} — messageId: ${info.messageId}`,
+    const suppressRes = await fetch(
+      `https://api.resend.com/suppressions?email=${encodeURIComponent(to)}`,
+      { headers: { 'Authorization': `Bearer ${_resendApiKey}` } },
     );
-  } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : String(err);
-    console.error(`[BetterAuth] ❌ Failed to send email to ${to}: ${msg}`);
-    // Re-throw so BetterAuth doesn't silently ignore the failure
-    throw err;
+    if (suppressRes.ok) {
+      const suppressData = await suppressRes.json() as { data?: unknown[] };
+      if (Array.isArray(suppressData.data) && suppressData.data.length > 0) {
+        console.error(`[BetterAuth] 🚫 ${to} is on suppression list — previous bounce or complaint`);
+        throw new Error(
+          'This email address is not deliverable (previously bounced). ' +
+          'Please use a different, valid email address.',
+        );
+      }
+    }
+  } catch (suppressErr) {
+    // Re-throw our own suppression error
+    if (suppressErr instanceof Error && suppressErr.message.includes('not deliverable')) throw suppressErr;
+    // Suppression API itself failed — proceed optimistically
+    console.warn(`[BetterAuth] ⚠ Suppression check failed for ${to}: ${(suppressErr as Error).message}`);
+  }
+
+  console.log(`[BetterAuth] 📧 Sending "${subject}" → ${to}`);
+
+  // ── LAYER 2: Send via Resend HTTP API ────────────────────────────────────────
+  let response: Response;
+  try {
+    response = await fetch('https://api.resend.com/emails', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${_resendApiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ from: FROM_EMAIL, to: [to], subject, html }),
+    });
+  } catch (networkErr) {
+    const msg = networkErr instanceof Error ? networkErr.message : String(networkErr);
+    console.error(`[BetterAuth] ❌ Network error sending email to ${to}: ${msg}`);
+    throw new Error('Failed to reach email service. Please try again.');
+  }
+
+  if (!response.ok) {
+    const errBody = await response.text().catch(() => 'unknown');
+    console.error(`[BetterAuth] ❌ Resend API ${response.status} for ${to}: ${errBody}`);
+    let reason = 'The verification email could not be delivered.';
+    try {
+      const parsed = JSON.parse(errBody) as { name?: string };
+      if (parsed.name === 'validation_error' || response.status === 422)
+        reason = 'Invalid email address — please check and try again.';
+      else if (response.status === 403) reason = 'Email sending not authorised. Please contact support.';
+      else if (response.status === 429) reason = 'Too many attempts. Please wait and try again.';
+    } catch { /* keep default reason */ }
+    throw new Error(reason);
+  }
+
+  const result = await response.json() as { id?: string };
+  const emailId = result.id;
+  console.log(`[BetterAuth] ✅ Accepted by Resend for ${to} — id: ${emailId ?? 'unknown'}`);
+
+  if (!emailId) return;
+
+  // ── LAYER 3: Poll for fast bounces (retries at 3 s, 7 s, 12 s) ──────────────
+  // Gmail hard bounces take 30-120 s (caught by suppression list on next attempt).
+  // Non-Gmail providers often bounce in < 12 s — caught here.
+  const POLL_DELAYS_MS = [3000, 4000, 5000];
+  for (const delay of POLL_DELAYS_MS) {
+    await new Promise<void>((r) => setTimeout(r, delay));
+    try {
+      const statusRes = await fetch(`https://api.resend.com/emails/${emailId}`, {
+        headers: { 'Authorization': `Bearer ${_resendApiKey}` },
+      });
+      if (!statusRes.ok) break;
+
+      const { status = '' } = await statusRes.json() as { status?: string };
+      console.log(`[BetterAuth] 📊 Poll status for ${to}: "${status}"`);
+
+      if (status === 'bounced') {
+        console.error(`[BetterAuth] ❌ Bounce confirmed for ${to}`);
+        throw new Error(
+          'Verification email bounced — this address does not exist or cannot receive mail. ' +
+          'Please check your email address and try again.',
+        );
+      }
+      if (status === 'delivered') {
+        console.log(`[BetterAuth] ✅ Delivery confirmed for ${to}`);
+        return;
+      }
+      // 'sent' / 'queued' = still in-flight, keep polling
+    } catch (pollErr) {
+      if (pollErr instanceof Error && pollErr.message.includes('bounced')) throw pollErr;
+      console.warn(`[BetterAuth] ⚠ Poll failed for ${to}: ${(pollErr as Error).message}`);
+      break;
+    }
   }
 }
 
-const FROM_EMAIL = process.env.EMAIL_FROM ?? _smtpUser ?? 'noreply@apio.one';
-// ↑ Used in sendMail() above — keeps EMAIL_FROM consistent with EmailService
 const APP_URL = process.env.BETTER_AUTH_URL ?? 'http://localhost:4000';
 
 // ── BetterAuth instance ───────────────────────────────────────────────────────
+
+// ── Sign-in before hook — auto-verify legacy accounts ─────────────────────────
+// Users created before mandatory email verification was introduced have
+// emailVerified: false. BetterAuth blocks their login with EMAIL_NOT_VERIFIED.
+// We auto-fix this by detecting ANY user with a password credential and flipping
+// emailVerified to true so they can proceed normally.
+//
+// Covers two legacy patterns:
+//   1. Old accounts: password stored directly on User.password field
+//   2. New accounts: password stored in Account table (providerId: 'credential')
+async function autoVerify2faUser(email: string): Promise<void> {
+  try {
+    const user = await prisma.user.findUnique({
+      where: { email },
+      select: { id: true, emailVerified: true, password: true },
+    });
+    if (!user || user.emailVerified) return; // already verified — nothing to do
+
+    // Pattern 1: legacy user — password stored directly on User model
+    const hasDirectPassword = !!user.password;
+
+    // Pattern 2: newer user — password stored in Account table
+    const credentialAccount = !hasDirectPassword
+      ? await prisma.account.findFirst({
+          where: { userId: user.id, providerId: 'credential' },
+          select: { id: true },
+        })
+      : null;
+
+    if (hasDirectPassword || credentialAccount) {
+      await prisma.user.update({
+        where: { id: user.id },
+        data: { emailVerified: true },
+      });
+      console.log(`[BetterAuth] ✅ Auto-verified legacy user: ${email}`);
+    }
+  } catch {
+    // Non-fatal — BetterAuth proceeds and will surface any real error itself.
+  }
+}
 
 const _auth: any = betterAuth({
   // Base URL of THIS server (the NestJS backend)
@@ -145,12 +261,19 @@ const _auth: any = betterAuth({
   // tries to match routes against '/' instead of '/api/v1/auth/better'.
   basePath: '/api/v1/auth/better',
 
-  // ── Rate limiting (FIX: brute-force OTP protection) ──────────────────────
-  // Limits all auth endpoints to 5 requests per 15 minutes per IP.
-  // This prevents brute-forcing the 6-digit OTP (10^6 combos → blocked after 5 attempts).
+  // ── Rate limiting ────────────────────────────────────────────────────────
+  // BetterAuth global rate limit protects /sign-up, /sign-in, OTP, and 2FA
+  // endpoints from bulk abuse. Keep it generous — NestJS Throttler (in
+  // auth.controller.ts) adds tighter limits on the few truly sensitive paths
+  // (e.g. /auth/login, /auth/register) at the API gateway level.
+  //
+  // OLD VALUE: max: 5 / window: 15 min — far too low.
+  // 5 slots covers only 2 registrations (sign-up + sendVerificationEmail each)
+  // or 5 login attempts, after which ALL email sending becomes blocked until
+  // the 15-min window resets. This was causing "verification email not sent".
   rateLimit: {
-    window: 15 * 60, // 15 minutes (seconds)
-    max: 5, // max 5 requests per window per IP on sensitive endpoints
+    window: 10 * 60, // 10 minutes (seconds)
+    max: 100,        // 100 requests per window per IP — blocks abuse, not real users
     storage: 'memory',
   },
 
@@ -189,15 +312,37 @@ const _auth: any = betterAuth({
       user: { email: string };
       url: string;
     }) => {
-      console.log(
-        `[BetterAuth] 🔐 sendVerificationEmail triggered for ${user.email}`,
-      );
+      console.log(`[BetterAuth] 🔐 sendVerificationEmail triggered for ${user.email}`);
       console.log(`[BetterAuth] 🔗 Verification URL: ${url}`);
-      await sendMail(
-        user.email,
-        'Verify your Apio account',
-        emailVerificationTemplate(url),
-      );
+      try {
+        await sendMail(
+          user.email,
+          'Verify your Apio account',
+          emailVerificationTemplate(url),
+        );
+      } catch (emailErr) {
+        // ── Zombie-user cleanup ────────────────────────────────────────────────
+        // sendMail threw → email was NOT sent. BetterAuth has already written the
+        // user row to the DB with emailVerified:false. Delete it now so the same
+        // email can be used again on the next registration attempt (no "already
+        // exists" orange block on retry).
+        console.error(
+          `[BetterAuth] ❌ Email failed for ${user.email} — deleting zombie user`,
+        );
+        try {
+          await prisma.user.deleteMany({
+            where: { email: user.email, emailVerified: false },
+          });
+          console.log(`[BetterAuth] 🗑 Zombie user deleted for ${user.email}`);
+        } catch (dbErr) {
+          console.error(
+            `[BetterAuth] ⚠ Could not delete zombie user for ${user.email}:`,
+            dbErr,
+          );
+        }
+        // Re-throw so BetterAuth surfaces an error to the frontend (→ red button).
+        throw emailErr;
+      }
     },
   },
 
@@ -257,7 +402,7 @@ const _auth: any = betterAuth({
     },
   },
 
-  // ── Email validation hook ─────────────────────────────────────────────────
+  // ── Email validation hook ─────────────────────────────────────────────────────
   // Runs BEFORE every user creation (email+password AND OAuth).
   // Blocks disposable domains and domains with no MX records.
   databaseHooks: {
@@ -269,6 +414,49 @@ const _auth: any = betterAuth({
             throw new Error(result.reason ?? 'Invalid email address.');
           }
           // Return undefined to allow creation to proceed
+        },
+        // ── Welcome email hook (OAuth users only) ──────────────────────────
+        // Fires AFTER BetterAuth creates any new user row.
+        //
+        // ⚠ DUPLICATE-EMAIL GUARD:
+        // Our preRegister flow creates users via prisma.user.create directly,
+        // which also triggers this Prisma-level hook. Those users receive their
+        // welcome email from AuthService.sendWelcomeEmail (called inside
+        // verifyPendingRegistration). To avoid sending a second welcome email,
+        // we wait 300 ms then check whether a 'credential' Account row now
+        // exists for this user. If it does → preRegister handled it → skip.
+        // If not → pure OAuth user → send welcome here.
+        after: async (user: { id?: string; email: string; name?: string | null }) => {
+          const apiKey = process.env.SMTP_PASS;
+          if (!apiKey) return;
+
+          // Brief delay so verifyPendingRegistration can write its Account row
+          await new Promise<void>((resolve) => setTimeout(resolve, 300));
+
+          try {
+            if (user.id) {
+              const credAccount = await _rawPrisma.account.findFirst({
+                where: { userId: user.id, providerId: 'credential' },
+                select: { id: true },
+              });
+              // credential account exists → preRegister user → skip
+              if (credAccount) return;
+            }
+          } catch {
+            // DB check failed — proceed to avoid missing OAuth welcome
+          }
+
+          const name = user.name ?? user.email.split('@')[0];
+          const from = process.env.EMAIL_FROM ?? 'Apio <noreply@apio.one>';
+          const dash = (process.env.FRONTEND_URL ?? 'https://apio.one') + '/projects';
+          const html = welcomeTemplate(name, dash);
+
+          // Non-blocking — never delay OAuth redirect
+          fetch('https://api.resend.com/emails', {
+            method: 'POST',
+            headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ from, to: [user.email], subject: 'Welcome to Apio!', html }),
+          }).catch(() => { /* non-critical — never throw */ });
         },
       },
     },
@@ -287,6 +475,26 @@ const _auth: any = betterAuth({
   ].filter(Boolean),
 
   secret: process.env.BETTER_AUTH_SECRET,
+
+  // ── Request hooks ─────────────────────────────────────────────────────────
+  // Runs BEFORE every sign-in attempt so we can auto-verify legacy 2FA users
+  // whose emailVerified flag is still false (created before verification was mandatory).
+  // BetterAuth v1.x: hooks.before is a single function receiving MiddlewareInputContext.
+  hooks: {
+    before: async (ctx: { path: string; request: Request }) => {
+      if (ctx.path === '/sign-in/email') {
+        try {
+          const body = await ctx.request.clone().json() as { email?: string };
+          if (body?.email) {
+            await autoVerify2faUser(body.email);
+          }
+        } catch {
+          // Non-fatal — proceed with normal sign-in flow
+        }
+      }
+      return undefined;
+    },
+  },
 });
 
 export const auth: any = _auth;

@@ -68,11 +68,21 @@ export function useAuth() {
   const login = useCallback(async (email: string, password: string) => {
     const { data, error } = await authClient.signIn.email({ email, password });
 
+    // ── 2FA redirect (checked FIRST — data.twoFactorRedirect is truthy, not an error) ──
+    // BetterAuth's twoFactorClient returns { data: { twoFactorRedirect: true } }
+    // when the user has 2FA enabled. This is NOT an error — handle it before
+    // the generic !data?.user check to prevent a false 'Sign in failed' throw.
+    if (data && 'twoFactorRedirect' in data && data.twoFactorRedirect) {
+      window.location.href = '/2fa';
+      return;
+    }
+
     if (error) {
       if (error.status === 401 || error.status === 403) {
-        // BetterAuth returns 403 when email is not verified
-        const msg = error.message?.toLowerCase() ?? '';
-        if (msg.includes('verify') || msg.includes('verified') || msg.includes('not verified') || error.code === 'EMAIL_NOT_VERIFIED') {
+        // Only treat as unverified email when BetterAuth explicitly says so.
+        // Avoid matching on 'verify'/'verified' to prevent false-positives
+        // from 2FA-related messages (e.g. "Please verify your identity").
+        if (error.code === 'EMAIL_NOT_VERIFIED') {
           throw new Error('__EMAIL_NOT_VERIFIED__');
         }
         throw new Error('Incorrect email or password.');
@@ -92,42 +102,35 @@ export function useAuth() {
   }, []);
 
   // ── Register (email + password) ────────────────────────────────────────────
-  const register = useCallback(async (email: string, password: string, name?: string) => {
-    const { data, error } = await authClient.signUp.email({
-      email,
-      password,
-      name: name ?? email.split('@')[0],
+  // Calls our custom pre-register endpoint — NOT BetterAuth's signUp.
+  // No user is written to DB until the email link is clicked (verify-first).
+  const register = useCallback(async (email: string, password: string, name?: string): Promise<
+    | { outcome: 'needsVerification' }
+    | { outcome: 'authenticated' }
+  > => {
+    const API = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000/api/v1';
+    const res = await fetch(`${API}/auth/pre-register`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password, name: name ?? email.split('@')[0] }),
     });
 
-    if (error) {
-      if (error.status === 409 || error.message?.toLowerCase().includes('already'))
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({ message: '' })) as { message?: string; statusCode?: number };
+      const status = res.status;
+      const msg = typeof body.message === 'string' ? body.message : '';
+
+      if (status === 409 || msg.toLowerCase().includes('already exists'))
         throw new Error('An account with this email already exists.');
-      if (error.status === 422 || error.message?.toLowerCase().includes('disposable') || error.message?.toLowerCase().includes('invalid email'))
-        throw new Error(error.message ?? 'Please use a valid email address.');
-      if (error.status === 429)
+      if (status === 422 || msg.toLowerCase().includes('invalid') || msg.toLowerCase().includes('bounced'))
+        throw new Error(msg || 'Please use a valid email address.');
+      if (status === 429)
         throw new Error('Too many attempts. Please wait a moment and try again.');
-      throw new Error(sanitizeError(error.message, 'Registration failed. Please try again.'));
+      throw new Error(sanitizeError(msg, 'Registration failed. Please try again.'));
     }
 
-    if (!data?.user) throw new Error('Registration failed. Please try again.');
-
-    // When requireEmailVerification is enabled, emailVerified is false after sign-up.
-    // BetterAuth does NOT always auto-send the verification email during sign-up —
-    // explicitly request it here so the user always receives the link.
-    if (data.user.emailVerified === false) {
-      try {
-        await authClient.sendVerificationEmail({ email });
-      } catch {
-        // Non-fatal — user can request resend from the check-email page
-      }
-      // Pass email in URL so check-email page can display it
-      window.location.href = `/check-email?email=${encodeURIComponent(email)}`;
-      return;
-    }
-
-    setState({ user: data.user as AuthUser, isAuthenticated: true, isLoading: false });
-    const baseUrl = process.env.NEXT_PUBLIC_APP_URL ?? 'http://localhost:3000';
-    window.location.href = `${baseUrl}/projects`;
+    // pre-register always requires verification — user must click email link
+    return { outcome: 'needsVerification' };
   }, []);
 
   // ── OAuth — Google ─────────────────────────────────────────────────────────
@@ -162,9 +165,11 @@ export function useAuth() {
   }, []);
 
   // ── Forgot Password (OTP flow) — Step 2: verify OTP + reset password ──────
-  // BetterAuth emailOTP plugin route: POST /email-otp/reset-password
+  // Calls our /auth/reset-password wrapper (not BetterAuth directly) so the
+  // backend can geo-locate the request IP and send a security notification email.
   const resetPasswordWithOtp = useCallback(async (email: string, otp: string, password: string) => {
-    const res = await fetch(`${BETTER_AUTH_BASE}/email-otp/reset-password`, {
+    const API = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000/api/v1';
+    const res = await fetch(`${API}/auth/reset-password`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       credentials: 'include',

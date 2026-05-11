@@ -31,6 +31,7 @@ export default function AnimatedPasswordInput({ wrapperClassName, value, onChang
                 type={showPassword ? "text" : "password"}
                 value={strValue}
                 onChange={onChange}
+                suppressHydrationWarning
                 style={{
                     ...props.style,
                     color: 'transparent',
@@ -118,7 +119,7 @@ export default function AnimatedPasswordInput({ wrapperClassName, value, onChang
             </div>
 
             {/* Eye Button */}
-            <div style={{ position: 'absolute', right: '6px', zIndex: 3, display: 'flex', alignItems: 'center', height: '100%' }}>
+            <div suppressHydrationWarning style={{ position: 'absolute', right: '6px', zIndex: 3, display: 'flex', alignItems: 'center', height: '100%' }}>
                 <AnimatedEye isVisible={showPassword} onClick={() => setShowPassword(!showPassword)} />
             </div>
         </div>

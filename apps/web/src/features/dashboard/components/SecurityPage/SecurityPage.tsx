@@ -13,10 +13,8 @@ const API = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000/api/v1';
 
 type Step =
   | 'idle'          // main view
-  | 'choose-method' // picking TOTP vs Email OTP
-  | 'totp-setup'    // scanning QR, entering code
-  | 'totp-verify'   // entering 6-digit code to confirm
-  | 'email-setup'   // email OTP enable
+  | 'choose-method' // password confirm before TOTP setup
+  | 'totp-verify'   // scanning QR, entering code to confirm
   | 'disable-confirm' // entering password to disable
   | 'success';
 
@@ -27,9 +25,7 @@ interface TotpSetup {
 export default function SecurityPage() {
   const { user } = useAuth();
 
-  // 2FA state
   const [is2FAEnabled, setIs2FAEnabled] = useState(false);
-  const [twoFactorMethod, setTwoFactorMethod] = useState<'totp' | 'email' | null>(null);
   const [step, setStep] = useState<Step>('idle');
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -42,7 +38,6 @@ export default function SecurityPage() {
   const [errorMsg, setErrorMsg] = useState('');
   const [successMsg, setSuccessMsg] = useState('');
   const [showPassword, setShowPassword] = useState(false);
-  const [chosenMethod, setChosenMethod] = useState<'totp' | 'email'>('totp');
 
   // ── Load current 2FA state ──────────────────────────────────────────────
   const loadSecurityStatus = useCallback(async () => {
@@ -55,7 +50,6 @@ export default function SecurityPage() {
       if (res.ok) {
         const data = await res.json() as { twoFactorEnabled?: boolean };
         setIs2FAEnabled(data.twoFactorEnabled ?? false);
-        if (data.twoFactorEnabled) setTwoFactorMethod('totp'); // default assumption
       }
     } catch { /* silent */ }
     setLoading(false);
@@ -139,26 +133,6 @@ export default function SecurityPage() {
     } finally { setSaving(false); }
   };
 
-  // ── Enable Email OTP ────────────────────────────────────────────────────
-  const handleEnableEmailOtp = async () => {
-    setSaving(true); setErrorMsg('');
-    try {
-      const res = await fetch(`${BETTER_AUTH}/email-otp/send-verification-otp`, {
-        method: 'POST',
-        credentials: 'include',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: user?.email, type: 'email-verification' }),
-      });
-      const data = await safeJson(res);
-      if (!res.ok) {
-        throw new Error(friendlyError(data.code as string, res.status, 'Failed to send verification email. Please try again.'));
-      }
-      setStep('email-setup');
-    } catch (e) {
-      setErrorMsg(e instanceof Error ? e.message : 'Could not send email. Please try again.');
-    } finally { setSaving(false); }
-  };
-
 
   // ── Disable 2FA ─────────────────────────────────────────────────────────
   const handleDisable = async () => {
@@ -176,7 +150,6 @@ export default function SecurityPage() {
         throw new Error(friendlyError(data.code as string, res.status, 'Incorrect password or unable to disable 2FA. Please try again.'));
       }
       setIs2FAEnabled(false);
-      setTwoFactorMethod(null);
       setStep('idle');
       clearForm();
       setSuccessMsg('Two-factor authentication has been disabled successfully.');
@@ -253,8 +226,8 @@ export default function SecurityPage() {
         {/* ── IDLE: Main 2FA status view ─────────────────────────── */}
         {step === 'idle' && (
           <div className={styles.methodGrid}>
-            {/* TOTP card */}
-            <div className={`${styles.methodCard} ${is2FAEnabled && twoFactorMethod === 'totp' ? styles.methodCardActive : ''}`}>
+            {/* TOTP card — only method */}
+            <div className={`${styles.methodCard} ${is2FAEnabled ? styles.methodCardActive : ''}`}>
               <div className={styles.methodIcon}>
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" width="24" height="24">
                   <rect x="5" y="2" width="14" height="20" rx="2" />
@@ -266,43 +239,15 @@ export default function SecurityPage() {
                 <div className={styles.methodName}>Authenticator App</div>
                 <div className={styles.methodDesc}>Use Google Authenticator, Authy, or any TOTP app to generate time-based codes.</div>
               </div>
-              {is2FAEnabled && twoFactorMethod === 'totp' ? (
+              {is2FAEnabled ? (
                 <span className={styles.methodBadge}>Active</span>
               ) : (
-                !is2FAEnabled && (
-                  <button
-                    className={styles.methodBtn}
-                    onClick={() => { setChosenMethod('totp'); setStep('choose-method'); clearForm(); }}
-                  >
-                    Enable
-                  </button>
-                )
-              )}
-            </div>
-
-            {/* Email OTP card */}
-            <div className={`${styles.methodCard} ${is2FAEnabled && twoFactorMethod === 'email' ? styles.methodCardActive : ''}`}>
-              <div className={styles.methodIcon}>
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" width="24" height="24">
-                  <rect x="2" y="4" width="20" height="16" rx="2" />
-                  <path d="M22 6l-10 7L2 6" strokeLinecap="round" />
-                </svg>
-              </div>
-              <div className={styles.methodInfo}>
-                <div className={styles.methodName}>Email OTP</div>
-                <div className={styles.methodDesc}>Receive a one-time code to your email address each time you log in.</div>
-              </div>
-              {is2FAEnabled && twoFactorMethod === 'email' ? (
-                <span className={styles.methodBadge}>Active</span>
-              ) : (
-                !is2FAEnabled && (
-                  <button
-                    className={styles.methodBtn}
-                    onClick={() => { setChosenMethod('email'); setStep('choose-method'); clearForm(); }}
-                  >
-                    Enable
-                  </button>
-                )
+                <button
+                  className={styles.methodBtn}
+                  onClick={() => { setStep('choose-method'); clearForm(); }}
+                >
+                  Enable
+                </button>
               )}
             </div>
           </div>
@@ -324,23 +269,11 @@ export default function SecurityPage() {
         {step === 'choose-method' && (
           <div className={styles.stepBox}>
             <div className={styles.stepTitle}>
-              {chosenMethod === 'totp' ? (
-                <>
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" width="18" height="18">
-                    <rect x="5" y="2" width="14" height="20" rx="2" />
-                    <path d="M12 18h.01" strokeLinecap="round" strokeWidth="2.5" />
-                  </svg>
-                  Set up Authenticator App
-                </>
-              ) : (
-                <>
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" width="18" height="18">
-                    <rect x="2" y="4" width="20" height="16" rx="2" />
-                    <path d="M22 6l-10 7L2 6" strokeLinecap="round" />
-                  </svg>
-                  Set up Email OTP
-                </>
-              )}
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" width="18" height="18">
+                <rect x="5" y="2" width="14" height="20" rx="2" />
+                <path d="M12 18h.01" strokeLinecap="round" strokeWidth="2.5" />
+              </svg>
+              Set up Authenticator App
             </div>
             <p className={styles.stepSub}>Confirm your identity to continue setup.</p>
 
@@ -353,7 +286,7 @@ export default function SecurityPage() {
                   placeholder="Enter your password"
                   value={password}
                   onChange={e => { setPassword(e.target.value); setErrorMsg(''); }}
-                  onKeyDown={e => e.key === 'Enter' && void (chosenMethod === 'totp' ? handleStartEnableTotp() : handleEnableEmailOtp())}
+                  onKeyDown={e => e.key === 'Enter' && void handleStartEnableTotp()}
                 />
                 <button type="button" className={styles.eyeBtn} onClick={() => setShowPassword(p => !p)}>
                   {showPassword
@@ -370,7 +303,7 @@ export default function SecurityPage() {
               <button className={styles.cancelBtn} onClick={handleCancel}>Cancel</button>
               <button
                 className={styles.primaryBtn}
-                onClick={() => void (chosenMethod === 'totp' ? handleStartEnableTotp() : handleEnableEmailOtp())}
+                onClick={() => void handleStartEnableTotp()}
                 disabled={saving || !password.trim()}
               >
                 {saving ? <span className={styles.spinner} /> : null}
@@ -489,36 +422,6 @@ export default function SecurityPage() {
           </div>
         )}
 
-        {/* ── STEP: Email OTP confirm ───────────────────────────────── */}
-        {step === 'email-setup' && (
-          <div className={styles.stepBox}>
-            <div className={styles.stepTitle}>
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" width="18" height="18">
-                <rect x="2" y="4" width="20" height="16" rx="2" />
-                <path d="M22 6l-10 7L2 6" strokeLinecap="round" />
-              </svg>
-              Email OTP Enabled
-            </div>
-            <div className={styles.emailOtpSuccess}>
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="48" height="48" className={styles.emailIcon}>
-                <rect x="2" y="4" width="20" height="16" rx="2" />
-                <path d="M22 6l-10 7L2 6" strokeLinecap="round" />
-              </svg>
-              <p>Email OTP has been enabled for <strong>{user?.email}</strong>.</p>
-              <p className={styles.emailOtpNote}>
-                From now on, each time you sign in, a one-time code will be sent to your email address.
-              </p>
-              <button className={styles.primaryBtn} onClick={() => {
-                setIs2FAEnabled(true);
-                setTwoFactorMethod('email');
-                setStep('success');
-                setSuccessMsg('Email OTP two-factor authentication is now active!');
-              }}>
-                Done
-              </button>
-            </div>
-          </div>
-        )}
 
         {/* ── STEP: Disable 2FA confirm ────────────────────────────── */}
         {step === 'disable-confirm' && (

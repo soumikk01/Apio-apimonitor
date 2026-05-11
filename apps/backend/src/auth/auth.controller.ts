@@ -8,6 +8,7 @@ import {
   Req,
   Query,
   UnauthorizedException,
+  Headers as NestHeaders,
 } from '@nestjs/common';
 
 import { Throttle, SkipThrottle } from '@nestjs/throttler';
@@ -39,6 +40,28 @@ export class AuthController {
   async checkEmail(@Query('email') email: string) {
     return validateEmail(email ?? '');
   }
+
+  /**
+   * GET /auth/check-email-exists?email=user@example.com
+   * Checks if an email is already registered in the database.
+   * Used before sign-up so the frontend can show "account already exists" immediately.
+   * Returns { exists: boolean }
+   * Rate-limited: 10 requests per 60 seconds per IP.
+   */
+  @Throttle({
+    short: { ttl: 60_000, limit: 10 },
+    medium: { ttl: 60_000, limit: 10 },
+  })
+  @Get('check-email-exists')
+  async checkEmailExists(@Query('email') email: string) {
+    if (!email?.trim()) return { exists: false };
+    const user = await this.prisma.user.findUnique({
+      where: { email: email.trim().toLowerCase() },
+      select: { id: true },
+    });
+    return { exists: !!user };
+  }
+
 
   /**
    * POST /auth/verify-otp
@@ -74,6 +97,64 @@ export class AuthController {
       : record.value;
 
     return { valid: storedOtp === otp };
+  }
+
+  /**
+   * POST /auth/pre-register
+   * Stores pending registration + sends verification email.
+   * NO user is written to DB until the email link is clicked.
+   * Rate-limited: 3 per 5 minutes per IP.
+   */
+  @Throttle({
+    short: { ttl: 300_000, limit: 3 },
+    medium: { ttl: 300_000, limit: 3 },
+  })
+  @Post('pre-register')
+  @HttpCode(HttpStatus.OK)
+  preRegister(@Body() body: { name: string; email: string; password: string }) {
+    return this.authService.preRegister(body);
+  }
+
+  /**
+   * GET /auth/verify-pending?token=xxx&email=yyy
+   * Verifies the pending registration token and CREATES the user in DB.
+   * Called when user clicks the verification link in their email.
+   * Rate-limited: 10 per 60 seconds per IP.
+   */
+  @Throttle({
+    short: { ttl: 60_000, limit: 10 },
+    medium: { ttl: 60_000, limit: 10 },
+  })
+  @Get('verify-pending')
+  async verifyPending(
+    @Query('token') token: string,
+    @Query('email') email: string,
+  ) {
+    return this.authService.verifyPendingRegistration(token, email);
+  }
+
+  /**
+   * POST /auth/reset-password
+   * Wraps BetterAuth's email-otp/reset-password endpoint.
+   * On success fires a security email showing date, location (geo-IP) and device.
+   * Rate-limited: 5 per 5 minutes per IP.
+   */
+  @Throttle({
+    short: { ttl: 300_000, limit: 5 },
+    medium: { ttl: 300_000, limit: 5 },
+  })
+  @Post('reset-password')
+  @HttpCode(HttpStatus.OK)
+  async resetPassword(
+    @Body() body: { email: string; otp: string; password: string },
+    @Req() req: { headers: Record<string, string | string[] | undefined> },
+    @NestHeaders('user-agent') userAgent: string,
+  ) {
+    return this.authService.resetPasswordWithSecurityEmail(
+      body,
+      req.headers,
+      userAgent ?? '',
+    );
   }
 
   /**

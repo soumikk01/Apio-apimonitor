@@ -68,11 +68,30 @@ export default function LoginPage() {
       // redirect handled inside useAuth.login()
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Something went wrong. Please try again.';
-      // Special sentinel: BetterAuth rejected login because email is unverified
+
+      // ── Legacy account auto-verify retry ──────────────────────────────────
+      // BetterAuth returns EMAIL_NOT_VERIFIED for users created before
+      // mandatory email verification was enforced. The backend's before-hook
+      // auto-flips emailVerified=true for credential accounts. Retry once
+      // so the user lands on /2fa (if enabled) or the dashboard — not check-email.
       if (msg === '__EMAIL_NOT_VERIFIED__') {
-        window.location.href = `/check-email?email=${encodeURIComponent(email.trim())}`;
-        return;
+        try {
+          await login(email, password); // retry — now emailVerified:true in DB
+          return; // login() handles redirect
+        } catch (retryErr) {
+          const retryMsg = retryErr instanceof Error ? retryErr.message : '';
+          // If still EMAIL_NOT_VERIFIED after retry → genuine unverified new account
+          if (retryMsg === '__EMAIL_NOT_VERIFIED__') {
+            window.location.href = `/check-email?email=${encodeURIComponent(email.trim())}`;
+            return;
+          }
+          setError(retryMsg || 'Sign in failed. Please try again.');
+          setIsSubmitting(false);
+          handleInvalid();
+          return;
+        }
       }
+
       setError(msg);
       setIsSubmitting(false);
       handleInvalid();

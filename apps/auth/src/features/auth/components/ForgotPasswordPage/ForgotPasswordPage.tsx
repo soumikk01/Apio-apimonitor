@@ -6,13 +6,15 @@ import { useAuth } from '@/features/auth/hooks/useAuth';
 import GooeyButton from '@/components/GooeyButton/GooeyButton';
 import GooeyErrorFilter from '@/components/GooeyErrorFilter/GooeyErrorFilter';
 import AnimatedPasswordInput from '@/components/AnimatedPasswordInput/AnimatedPasswordInput';
+import PasswordStrengthPanel from '@/components/PasswordStrengthPanel/PasswordStrengthPanel';
+import ButtonLogoSpinner from '@/components/ButtonLogoSpinner/ButtonLogoSpinner';
 import styles from './ForgotPasswordPage.module.scss';
 
 // ── stages ────────────────────────────────────────────────────────────────────
 // FIX 1: Two stages only. OTP + password are on ONE combined form in 'reset'
 //         stage — so a wrong OTP is caught on the same screen, not a stage later.
 type Stage = 'email' | 'reset';
-type BtnState = 'idle' | 'loading' | 'success';
+type BtnState = 'idle' | 'loading' | 'success' | 'notFound';
 
 const OTP_LENGTH = 6;
 const OTP_EXPIRY_SECONDS = 300; // 5 minutes — must match BetterAuth's emailOTP expiresIn
@@ -102,6 +104,7 @@ export default function ForgotPasswordPage() {
   const [otpDigits, setOtpDigits]         = useState<string[]>(Array(OTP_LENGTH).fill(''));
   const [newPassword, setNewPassword]     = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
+  const [newPasswordTouched, setNewPasswordTouched] = useState(false);
 
   const [error, setError]               = useState('');
   const [isShaking, setIsShaking]       = useState(false);
@@ -222,8 +225,21 @@ export default function ForgotPasswordPage() {
     e.preventDefault();
     setError('');
     if (!email.trim()) { setError('Please enter your account email.'); shake(); return; }
+
     setSendBtnState('loading');
     try {
+      // ── Pre-check: does this email exist in the database? ─────────────────
+      const API = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000/api/v1';
+      const checkRes = await fetch(`${API}/auth/check-email-exists?email=${encodeURIComponent(email.trim())}`);
+      const { exists } = await checkRes.json() as { exists: boolean };
+
+      if (!exists) {
+        setSendBtnState('notFound');
+        // Auto-reset back to idle after 3 seconds
+        setTimeout(() => setSendBtnState('idle'), 3000);
+        return;
+      }
+
       await sendForgotPasswordOtp(email.trim());
       setSendCount(1);   // first send
       startCooldown();   // 60s cooldown starts immediately on first send
@@ -411,23 +427,29 @@ export default function ForgotPasswordPage() {
                     )}
                     <GooeyButton
                       type="submit"
-                      className={styles.submitBtn}
-                      isLoading={sendBtnState === 'loading'}
+                      className={[
+                        styles.submitBtn,
+                        sendBtnState === 'notFound' ? styles.submitBtnNotFound : '',
+                      ].filter(Boolean).join(' ')}
+                      disabled={sendBtnState === 'loading' || sendBtnState === 'success' || sendBtnState === 'notFound'}
                       icon={
-                        sendBtnState === 'success'
-                          ? <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M20 6L9 17l-5-5"/></svg>
-                          : <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><rect width="20" height="16" x="2" y="4" rx="2"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/></svg>
+                        sendBtnState === 'success' ? (
+                          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M20 6L9 17l-5-5"/></svg>
+                        ) : sendBtnState === 'notFound' ? (
+                          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+                        ) : (
+                          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><rect width="20" height="16" x="2" y="4" rx="2"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/></svg>
+                        )
                       }
                     >
                       {sendBtnState === 'loading' ? (
-                        <span className={styles.loaderContent}>
-                          <svg className={styles.spinnerIcon} viewBox="0 0 24 24">
-                            <circle opacity="0.25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none"/>
-                            <path fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"/>
-                          </svg>
-                          Sending…
+                        <span style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
+                          <ButtonLogoSpinner />
+                          Checking…
                         </span>
-                      ) : sendBtnState === 'success' ? 'OTP Sent! ✓' : 'Send Verification OTP'}
+                      ) : sendBtnState === 'success' ? 'OTP Sent! ✓'
+                        : sendBtnState === 'notFound' ? '! Account Not Found'
+                        : 'Send Verification OTP'}
                     </GooeyButton>
                   </form>
                 )}
@@ -508,15 +530,22 @@ export default function ForgotPasswordPage() {
                       <div className={styles.passwordSectionEntering}>
                         <div className={styles.field} style={{ marginTop: '1.25rem' }}>
                           <label className={styles.label} htmlFor="new-password">New Password</label>
-                          <AnimatedPasswordInput
-                            id="new-password"
-                            wrapperClassName={`${styles.input} ${styles.passwordWrapper} ${isShaking ? styles.inputError : ''}`}
-                            placeholder="Min. 8 characters"
-                            value={newPassword}
-                            onChange={e => setNewPassword(e.target.value)}
-                            autoComplete="new-password"
-                            disabled={resetBtnState === 'loading'}
-                          />
+                          <div style={{ position: 'relative' }}>
+                            <AnimatedPasswordInput
+                              id="new-password"
+                              wrapperClassName={`${styles.input} ${styles.passwordWrapper} ${isShaking ? styles.inputError : ''}`}
+                              placeholder="6–15 characters"
+                              value={newPassword}
+                              onChange={e => setNewPassword(e.target.value)}
+                              onFocus={() => setNewPasswordTouched(true)}
+                              autoComplete="new-password"
+                              disabled={resetBtnState === 'loading'}
+                            />
+                            <PasswordStrengthPanel
+                              password={newPassword}
+                              visible={newPasswordTouched}
+                            />
+                          </div>
                         </div>
 
                         <div className={styles.field} style={{ marginTop: '1rem' }}>
@@ -530,6 +559,26 @@ export default function ForgotPasswordPage() {
                             autoComplete="new-password"
                             disabled={resetBtnState === 'loading'}
                           />
+                          {/* Match indicator */}
+                          {confirmPassword.length > 0 && (
+                            <div style={{
+                              display: 'flex', alignItems: 'center', gap: 6,
+                              marginTop: 6, fontSize: '0.76rem', fontWeight: 600,
+                              color: confirmPassword === newPassword ? '#4ade80' : '#f87171',
+                            }}>
+                              {confirmPassword === newPassword ? (
+                                <>
+                                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12" /></svg>
+                                  Passwords match
+                                </>
+                              ) : (
+                                <>
+                                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></svg>
+                                  Passwords don&apos;t match
+                                </>
+                              )}
+                            </div>
+                          )}
                         </div>
                       </div>
                     )}

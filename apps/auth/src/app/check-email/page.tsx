@@ -1,7 +1,6 @@
 'use client';
 
 import React, { Suspense, useEffect, useState, useRef } from 'react';
-import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
 import GooeyButton from '@/components/GooeyButton/GooeyButton';
 import SpringBackground from '@/components/SpringBackground/SpringBackground';
@@ -176,64 +175,63 @@ function ExpiredHex() {
 function CheckEmailContent() {
   const params   = useSearchParams();
   const email    = params.get('email') ?? '';
-  const [timeLeft, setTimeLeft] = useState(TOTAL_SECONDS);
-  const [expired,  setExpired]  = useState(false);
+
+  // ── Persist countdown across refreshes ───────────────────────────────────────
+  const storageKey = `check-email-start::${email}`;
+
+  const getTimeLeft = () => {
+    if (typeof window === 'undefined') return TOTAL_SECONDS;
+    const stored = sessionStorage.getItem(storageKey);
+    if (!stored) return TOTAL_SECONDS;
+    const elapsed = Math.floor((Date.now() - parseInt(stored, 10)) / 1000);
+    return Math.max(0, TOTAL_SECONDS - elapsed);
+  };
+
+  const [timeLeft, setTimeLeft] = useState(TOTAL_SECONDS); // SSR-safe init
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // Hydrate from sessionStorage after mount (client-only)
+  useEffect(() => {
+    if (!email) return;
+    if (!sessionStorage.getItem(storageKey)) {
+      sessionStorage.setItem(storageKey, String(Date.now()));
+    }
+    const remaining = getTimeLeft();
+    setTimeLeft(remaining);
+    // Already expired on mount → redirect immediately
+    if (remaining <= 0) {
+      sessionStorage.removeItem(storageKey);
+      window.location.href = '/register';
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [email]);
 
   useEffect(() => {
     timerRef.current = setInterval(() => {
       setTimeLeft(prev => {
         if (prev <= 1) {
           clearInterval(timerRef.current!);
-          setExpired(true);
+          // ── Timer expired → redirect to register ─────────────────────────
+          sessionStorage.removeItem(storageKey);
+          window.location.href = '/register';
           return 0;
         }
         return prev - 1;
       });
     }, 1000);
     return () => { if (timerRef.current) clearInterval(timerRef.current); };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // ── EXPIRED STATE ──────────────────────────────────────────────────────────
-  if (expired) {
-    return (
-      <div className={`${fp.page} ${fp.dark}`}>
-        <div className={fp.patternOverlay} />
-        <div className={fp.noiseOverlay} />
-        <SpringBackground />
+  // ── Block all back navigation ─────────────────────────────────────────────────
+  useEffect(() => {
+    window.history.pushState(null, '', window.location.href);
+    const handlePopState = () => { window.history.pushState(null, '', window.location.href); };
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, []);
 
-        <main className={fp.centerMain}>
-          <div className={fp.centerStack}>
-            <div className={fp.topCopy}>
-              <ExpiredHex />
-              <h1 className={fp.introTitle} style={{ color: '#fff' }}>Timer Ended</h1>
-              <p className={fp.introSub}>
-                Your 5-minute reminder has passed, but your verification
-                link is still valid for <strong>24 hours</strong>.
-                <br />
-                Check your inbox (and spam) or register again.
-              </p>
-            </div>
-
-            <div className={fp.card} style={{ textAlign: 'center' }}>
-              <p style={{ fontSize: '0.9rem', color: 'rgba(255,255,255,0.6)', marginBottom: '1.5rem', lineHeight: 1.7 }}>
-                Didn&apos;t receive the email? Check your spam folder or
-                request a new verification link.
-              </p>
-              <div style={{ display: 'flex', gap: '0.75rem', flexDirection: 'column', alignItems: 'center' }}>
-                <GooeyButton onClick={() => { window.location.href = '/register'; }}>
-                  Register Again
-                </GooeyButton>
-                <Link href="/login" style={{ color: '#818cf8', fontSize: '0.83rem' }}>Back to Login</Link>
-              </div>
-            </div>
-          </div>
-        </main>
-      </div>
-    );
-  }
-
-  // ── WAITING STATE ──────────────────────────────────────────────────────────
+  // ── WAITING STATE ─────────────────────────────────────────────────────────────
   return (
     <div className={`${fp.page} ${fp.dark}`}>
       <div className={fp.patternOverlay} />
@@ -274,21 +272,20 @@ function CheckEmailContent() {
               fontSize: '0.83rem',
               color: 'rgba(255,255,255,0.42)',
               marginTop: '2.2rem',
-              marginBottom: '1.4rem',
+              marginBottom: '1.5rem',
               lineHeight: 1.7,
             }}>
               Click the link in the email to activate your account.
               <br />
-              Didn&apos;t receive it? Check spam or{' '}
-              <Link href="/register"
-                style={{ color: '#818cf8', textDecoration: 'none', fontWeight: 600 }}>
-                try a different email
-              </Link>.
+              The link is valid for <strong style={{ color: 'rgba(255,255,255,0.65)' }}>5 minutes</strong> — after that you&apos;ll need to register again.
             </p>
 
             {/* Back to Login */}
-            <GooeyButton onClick={() => { window.location.href = '/login'; }}>
-              Back to Login
+            <GooeyButton onClick={() => {
+              sessionStorage.removeItem(storageKey);
+              window.location.href = '/register';
+            }}>
+              Back to Register
             </GooeyButton>
 
           </div>

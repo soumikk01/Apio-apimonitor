@@ -1,10 +1,10 @@
 'use client';
 
 import { useState, useEffect, useRef } from 'react';
-import { useSearchParams } from 'next/navigation';
 import { authClient } from '@/lib/auth-client';
 import GooeyButton from '@/components/GooeyButton/GooeyButton';
 import GooeyErrorFilter from '@/components/GooeyErrorFilter/GooeyErrorFilter';
+import ButtonLogoSpinner from '@/components/ButtonLogoSpinner/ButtonLogoSpinner';
 import styles from './TwoFactorPage.module.scss';
 import loginStyles from '../LoginPage/LoginPage.module.scss';
 
@@ -31,51 +31,18 @@ function ErrorBanner({ errorMsg }: { errorMsg: string }) {
   );
 }
 
-function MethodBadge({ lockedMethod }: { lockedMethod: Method }) {
-  return (
-    <div className={styles.methodBadge}>
-      {lockedMethod === 'totp' ? (
-        <>
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="13" height="13">
-            <rect x="5" y="2" width="14" height="20" rx="2"/>
-            <path d="M12 18h.01" strokeLinecap="round" strokeWidth="2.5"/>
-          </svg>
-          Authenticator App
-        </>
-      ) : (
-        <>
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="13" height="13">
-            <rect x="2" y="4" width="20" height="16" rx="2"/>
-            <path d="M22 6l-10 7L2 6" strokeLinecap="round"/>
-          </svg>
-          Email OTP
-        </>
-      )}
-    </div>
-  );
-}
-
-type Method = 'totp' | 'email-otp';
 
 export default function TwoFactorPage() {
-  const searchParams = useSearchParams();
-
-  // Lock the method from URL param — only show what the user set up.
-  // Falls back to 'totp' if nothing is passed.
-  const lockedMethod = (searchParams.get('method') as Method | null) ?? 'totp';
-
   const [code, setCode] = useState('');
   const [errorMsg, setErrorMsg] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isShaking, setIsShaking] = useState(false);
-  const [emailSent, setEmailSent] = useState(false);
-  const [sendingEmail, setSendingEmail] = useState(false);
   const otpRefs = useRef<(HTMLInputElement | null)[]>([]);
 
-  // Auto-focus first box on mount / method change
+  // Auto-focus first box on mount
   useEffect(() => {
     setTimeout(() => otpRefs.current[0]?.focus(), 100);
-  }, [lockedMethod]);
+  }, []);
 
   const shake = () => {
     setIsShaking(true);
@@ -87,7 +54,8 @@ export default function TwoFactorPage() {
     window.location.assign(`${appUrl}/projects`);
   };
 
-  // ── Submit TOTP ──────────────────────────────────────────────────────────
+
+  // ── Submit TOTP (only method) ────────────────────────────────────────────
   const handleTotpSubmit = async (submittedCode?: string) => {
     const clean = (submittedCode ?? code).replace(/\s/g, '');
     if (clean.length !== 6) { setErrorMsg('Please enter the full 6-digit code.'); shake(); return; }
@@ -102,37 +70,6 @@ export default function TwoFactorPage() {
       shake();
     } finally { setIsSubmitting(false); }
   };
-
-  // ── Send Email OTP ───────────────────────────────────────────────────────
-  const handleSendEmailOtp = async () => {
-    setSendingEmail(true); setErrorMsg('');
-    try {
-      const { error } = await authClient.twoFactor.sendOtp();
-      if (error) throw new Error(error.message ?? 'Failed to send OTP');
-      setEmailSent(true);
-      setTimeout(() => otpRefs.current[0]?.focus(), 150);
-    } catch (err) {
-      setErrorMsg(err instanceof Error ? err.message : 'Could not send OTP email.');
-    } finally { setSendingEmail(false); }
-  };
-
-  // ── Submit Email OTP ─────────────────────────────────────────────────────
-  const handleEmailOtpSubmit = async (submittedCode?: string) => {
-    const clean = (submittedCode ?? code).replace(/\s/g, '');
-    if (clean.length !== 6) { setErrorMsg('Please enter the 6-digit code from your email.'); shake(); return; }
-
-    setIsSubmitting(true); setErrorMsg('');
-    try {
-      const { error } = await authClient.twoFactor.verifyOtp({ code: clean });
-      if (error) throw new Error(error.message ?? 'Invalid OTP. Please try again.');
-      redirectToDashboard();
-    } catch (err) {
-      setErrorMsg(err instanceof Error ? err.message : 'Verification failed.');
-      shake();
-    } finally { setIsSubmitting(false); }
-  };
-
-  const handleSubmit = lockedMethod === 'totp' ? handleTotpSubmit : handleEmailOtpSubmit;
 
   // ── 6-box OTP renderer ───────────────────────────────────────────────────
   const renderOtpBoxes = () => (
@@ -158,7 +95,7 @@ export default function TwoFactorPage() {
             setCode(joined);
             setErrorMsg('');
             if (digit && i < 5) otpRefs.current[i + 1]?.focus();
-            if (joined.length === 6) setTimeout(() => void handleSubmit(joined), 80);
+            if (joined.length === 6) setTimeout(() => void handleTotpSubmit(joined), 80);
           }}
           onKeyDown={e => {
             if (e.key === 'Backspace') {
@@ -175,7 +112,7 @@ export default function TwoFactorPage() {
             } else if (e.key === 'ArrowRight' && i < 5) {
               e.preventDefault(); otpRefs.current[i + 1]?.focus();
             } else if (e.key === 'Enter') {
-              e.preventDefault(); void handleSubmit();
+              e.preventDefault(); void handleTotpSubmit();
             }
           }}
           onPaste={e => {
@@ -185,7 +122,7 @@ export default function TwoFactorPage() {
             setErrorMsg('');
             const nextIdx = Math.min(pasted.length, 5);
             otpRefs.current[nextIdx]?.focus();
-            if (pasted.length === 6) setTimeout(() => void handleSubmit(pasted), 80);
+            if (pasted.length === 6) setTimeout(() => void handleTotpSubmit(pasted), 80);
           }}
           onFocus={e => e.target.select()}
         />
@@ -193,13 +130,8 @@ export default function TwoFactorPage() {
     </div>
   );
 
-  // ── Descriptive subtitle per method & state ──────────────────────────────
-  const subtitle =
-    lockedMethod === 'totp'
-      ? 'Enter the 6-digit code from your authenticator app.'
-      : emailSent
-        ? 'Check your inbox — enter the 6-digit code we just sent.'
-        : 'Click below and we\'ll send a one-time code to your email.';
+  // Subtitle
+  const subtitle = 'Enter the 6-digit code from your authenticator app.';
 
   return (
     <div className={`${loginStyles.page} ${loginStyles.dark}`}>
@@ -221,15 +153,20 @@ export default function TwoFactorPage() {
                   </svg>
                 </div>
                 <h1 className={loginStyles.cardTitle}>Two-Factor Verification</h1>
-                <MethodBadge lockedMethod={lockedMethod} />
+                <div className={styles.methodBadge}>
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="13" height="13">
+                    <rect x="5" y="2" width="14" height="20" rx="2"/>
+                    <path d="M12 18h.01" strokeLinecap="round" strokeWidth="2.5"/>
+                  </svg>
+                  Authenticator App
+                </div>
                 <p className={loginStyles.cardSub} style={{ marginTop: '0.5rem' }}>{subtitle}</p>
               </div>
 
-              {/* ── TOTP form ── */}
-              {lockedMethod === 'totp' && (
-                <form style={{ width: '100%' }} onSubmit={e => { e.preventDefault(); void handleSubmit(); }} noValidate>
-                  {renderOtpBoxes()}
-                  <ErrorBanner errorMsg={errorMsg} />
+              {/* TOTP form — only method */}
+              <form style={{ width: '100%' }} onSubmit={e => { e.preventDefault(); void handleTotpSubmit(); }} noValidate>
+                {renderOtpBoxes()}
+                <ErrorBanner errorMsg={errorMsg} />
                   <GooeyButton
                     type="submit"
                     className={`${loginStyles.submitBtn} ${styles.submitBtn}`}
@@ -244,95 +181,12 @@ export default function TwoFactorPage() {
                   >
                     {isSubmitting ? (
                       <span className={loginStyles.loaderContent}>
-                        <svg className={loginStyles.spinnerIcon} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
-                          <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83" />
-                        </svg>
+                        <ButtonLogoSpinner />
                         Verifying…
                       </span>
                     ) : 'Verify & Sign In'}
                   </GooeyButton>
-                </form>
-              )}
-
-              {/* ── Email OTP flow ── */}
-              {lockedMethod === 'email-otp' && (
-                <div style={{ width: '100%' }}>
-                  {!emailSent ? (
-                    <>
-                      <ErrorBanner errorMsg={errorMsg} />
-                      <GooeyButton
-                        type="button"
-                        className={`${loginStyles.submitBtn} ${styles.submitBtn}`}
-                        onClick={() => void handleSendEmailOtp()}
-                        disabled={sendingEmail}
-                        isLoading={sendingEmail}
-                        icon={
-                          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-                            <rect width="20" height="16" x="2" y="4" rx="2" />
-                            <path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7" />
-                          </svg>
-                        }
-                      >
-                        {sendingEmail ? (
-                          <span className={loginStyles.loaderContent}>
-                            <svg className={loginStyles.spinnerIcon} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
-                              <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83" />
-                            </svg>
-                            Sending…
-                          </span>
-                        ) : 'Send Code to Email'}
-                      </GooeyButton>
-                    </>
-                  ) : (
-                    <form onSubmit={e => { e.preventDefault(); void handleSubmit(); }} noValidate>
-                      <div className={styles.emailSentNote} style={{ marginBottom: '1.2rem', justifyContent: 'center' }}>
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="16" height="16">
-                          <rect x="2" y="4" width="20" height="16" rx="2"/>
-                          <path d="M22 6l-10 7L2 6" strokeLinecap="round"/>
-                        </svg>
-                        Code sent! Check your inbox.
-                      </div>
-
-                      {renderOtpBoxes()}
-                      <ErrorBanner errorMsg={errorMsg} />
-
-                      <GooeyButton
-                        type="submit"
-                        className={`${loginStyles.submitBtn} ${styles.submitBtn}`}
-                        disabled={isSubmitting || code.length !== 6}
-                        isLoading={isSubmitting}
-                        icon={
-                          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-                            <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
-                            <path d="m9 12 2 2 4-4" />
-                          </svg>
-                        }
-                      >
-                        {isSubmitting ? (
-                          <span className={loginStyles.loaderContent}>
-                            <svg className={loginStyles.spinnerIcon} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
-                              <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83" />
-                            </svg>
-                            Verifying…
-                          </span>
-                        ) : 'Verify & Sign In'}
-                      </GooeyButton>
-
-                      <div style={{ textAlign: 'center', marginTop: '1rem' }}>
-                        <button
-                          type="button"
-                          className={loginStyles.forgotLinkInline}
-                          style={{ background: 'transparent', border: 'none', cursor: 'pointer' }}
-                          onClick={() => { setCode(''); void handleSendEmailOtp(); }}
-                          disabled={sendingEmail}
-                        >
-                          {sendingEmail ? 'Sending…' : 'Didn\'t get it? Resend code'}
-                        </button>
-                      </div>
-                    </form>
-                  )}
-                </div>
-              )}
+              </form>
 
               {/* Back to login */}
               <div className={styles.footer} style={{ borderTop: 'none', marginTop: '1rem', paddingTop: '0.5rem' }}>

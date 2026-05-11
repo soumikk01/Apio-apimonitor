@@ -427,11 +427,54 @@ $r-lg:   24px;
   animation: slideUp 0.25s ease forwards;
 }
 
-.submitBtn {
+// Wrapper div — handles appear animation + spacing
+.submitBtnWrapper {
   margin-top: 0.6rem;
   opacity: 0;
   animation: fieldAppear 0.6s cubic-bezier(0.16, 1, 0.3, 1) forwards 0.5s;
 }
+
+// Inner <button> — only carries state colour overrides via className
+// Uses !important to beat :global(.dark) .button specificity in GooeyButton
+.submitBtnSuccess {
+  background: linear-gradient(135deg, #16a34a, #22c55e) !important;
+  color: #fff !important;
+  animation: btnSuccessPulse 0.55s cubic-bezier(0.34, 1.56, 0.64, 1) !important;
+}
+
+.submitBtnError {
+  background: linear-gradient(135deg, #b91c1c, #ef4444) !important;
+  color: #fff !important;
+  animation: btnErrorShake 0.45s cubic-bezier(0.36, 0.07, 0.19, 0.97) !important;
+}
+
+// Orange — "account already exists" — distinct from green and red
+.submitBtnDuplicate {
+  background: linear-gradient(135deg, #b45309, #f59e0b) !important;
+  color: #fff !important;
+  animation: btnDuplicateBounce 0.5s cubic-bezier(0.34, 1.56, 0.64, 1) !important;
+}
+
+@keyframes btnSuccessPulse {
+  0%   { transform: scale(0.96); }
+  60%  { transform: scale(1.04); }
+  100% { transform: scale(1); }
+}
+
+@keyframes btnErrorShake {
+  0%, 100% { transform: translateX(0); }
+  20%      { transform: translateX(-5px); }
+  40%      { transform: translateX(5px); }
+  60%      { transform: translateX(-3px); }
+  80%      { transform: translateX(3px); }
+}
+
+@keyframes btnDuplicateBounce {
+  0%   { transform: scale(0.96); }
+  50%  { transform: scale(1.03); }
+  100% { transform: scale(1); }
+}
+
 
 .loaderContent {
   display: flex;
