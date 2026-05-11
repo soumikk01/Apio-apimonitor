@@ -6,10 +6,12 @@ import {
   HttpCode,
   HttpStatus,
   Req,
+  Res,
   Query,
   UnauthorizedException,
   Headers as NestHeaders,
 } from '@nestjs/common';
+import { Response } from 'express';
 
 import { Throttle, SkipThrottle } from '@nestjs/throttler';
 import { AuthService } from './auth.service';
@@ -130,6 +132,65 @@ export class AuthController {
     @Query('email') email: string,
   ) {
     return this.authService.verifyPendingRegistration(token, email);
+  }
+
+  /**
+   * GET /auth/claim-auto-login?email=xxx
+   * Returns (and consumes) the one-time auto-login token generated after
+   * email verification. Used by the 'Check your inbox' polling page so the
+   * registration device can also auto-login to /projects.
+   * Rate-limited: 5 per 60 seconds per IP.
+   */
+  @Throttle({
+    short: { ttl: 60_000, limit: 5 },
+    medium: { ttl: 300_000, limit: 10 },
+  })
+  @Get('claim-auto-login')
+  async claimAutoLogin(@Query('email') email: string) {
+    if (!email?.trim()) return { token: null };
+    const token = await this.authService.claimAutoLoginToken(email);
+    return { token: token ?? null };
+  }
+
+  /**
+   * GET /auth/auto-login?token=xxx&email=xxx
+   * Validates the one-time token, creates a real BetterAuth session, sets
+   * the session cookie, and redirects the browser to the web app /projects.
+   * Rate-limited: 5 per 60 seconds per IP.
+   */
+  @Throttle({
+    short: { ttl: 60_000, limit: 5 },
+    medium: { ttl: 300_000, limit: 10 },
+  })
+  @Get('auto-login')
+  async autoLogin(
+    @Query('token') token: string,
+    @Query('email') email: string,
+    @Res() res: Response,
+  ) {
+    const appUrl = process.env.APP_URL ?? 'http://localhost:3000';
+    const projectsUrl = `${appUrl}/projects`;
+
+    if (!token?.trim() || !email?.trim()) {
+      return res.redirect(projectsUrl);
+    }
+
+    const sessionToken = await this.authService.autoLoginWithToken(email, token);
+    if (!sessionToken) {
+      return res.redirect(projectsUrl);
+    }
+
+    const isProduction = process.env.NODE_ENV === 'production';
+    res.cookie('better-auth.session_token', sessionToken, {
+      httpOnly: true,
+      secure: isProduction,
+      sameSite: 'lax',
+      domain: isProduction ? '.apio.one' : undefined,
+      maxAge: 30 * 24 * 60 * 60 * 1000,
+      path: '/',
+    });
+
+    return res.redirect(projectsUrl);
   }
 
   /**

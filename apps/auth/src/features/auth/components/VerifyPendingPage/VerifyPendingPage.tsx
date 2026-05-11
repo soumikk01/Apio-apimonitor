@@ -32,9 +32,21 @@ export default function VerifyPendingPage({ token, email }: Props) {
 
     fetch(url, { signal: controller.signal })
       .then(async (res) => {
-        const body = await res.json().catch(() => ({ message: '' })) as { message?: string; success?: boolean };
+        const body = await res.json().catch(() => ({ message: '' })) as {
+          message?: string;
+          success?: boolean;
+          autoLoginToken?: string;
+        };
         if (res.ok) {
           setStatus('success');
+          // Redirect to the backend auto-login endpoint which:
+          // 1. Validates the one-time token
+          // 2. Creates a real BetterAuth session + sets the cookie
+          // 3. Redirects to the web app /projects (user lands logged in)
+          if (body.autoLoginToken && email) {
+            window.location.href =
+              `${API}/auth/auto-login?token=${encodeURIComponent(body.autoLoginToken)}&email=${encodeURIComponent(email)}`;
+          }
         } else if (res.status === 404) {
           setStatus('expired');
           setMessage(body.message ?? 'Verification link expired. Please register again.');
