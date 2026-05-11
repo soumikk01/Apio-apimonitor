@@ -11,7 +11,7 @@ import {
   UnauthorizedException,
   Headers as NestHeaders,
 } from '@nestjs/common';
-import { Response } from 'express';
+import type { Response } from 'express';
 
 import { Throttle, SkipThrottle } from '@nestjs/throttler';
 import { AuthService } from './auth.service';
