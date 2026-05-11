@@ -91,7 +91,7 @@ const _resendApiKey = process.env.SMTP_PASS;
 if (!_resendApiKey) {
   console.error(
     '\n[BetterAuth] ❌ SMTP_PASS (Resend API key) NOT SET — verification emails will NOT be sent!\n' +
-    '  Set SMTP_PASS=re_xxxxxx in apps/backend/.env\n',
+      '  Set SMTP_PASS=re_xxxxxx in apps/backend/.env\n',
   );
 } else {
   console.log('[BetterAuth] ✅ Resend API key loaded — email sender ready.');
@@ -105,7 +105,9 @@ async function sendMail(
   html: string,
 ): Promise<void> {
   if (!_resendApiKey) {
-    console.error(`[BetterAuth] ❌ SMTP_PASS (Resend API key) not set — cannot send email to ${to}`);
+    console.error(
+      `[BetterAuth] ❌ SMTP_PASS (Resend API key) not set — cannot send email to ${to}`,
+    );
     throw new Error('Email service is not configured. Please contact support.');
   }
 
@@ -115,23 +117,31 @@ async function sendMail(
   try {
     const suppressRes = await fetch(
       `https://api.resend.com/suppressions?email=${encodeURIComponent(to)}`,
-      { headers: { 'Authorization': `Bearer ${_resendApiKey}` } },
+      { headers: { Authorization: `Bearer ${_resendApiKey}` } },
     );
     if (suppressRes.ok) {
-      const suppressData = await suppressRes.json() as { data?: unknown[] };
+      const suppressData = (await suppressRes.json()) as { data?: unknown[] };
       if (Array.isArray(suppressData.data) && suppressData.data.length > 0) {
-        console.error(`[BetterAuth] 🚫 ${to} is on suppression list — previous bounce or complaint`);
+        console.error(
+          `[BetterAuth] 🚫 ${to} is on suppression list — previous bounce or complaint`,
+        );
         throw new Error(
           'This email address is not deliverable (previously bounced). ' +
-          'Please use a different, valid email address.',
+            'Please use a different, valid email address.',
         );
       }
     }
   } catch (suppressErr) {
     // Re-throw our own suppression error
-    if (suppressErr instanceof Error && suppressErr.message.includes('not deliverable')) throw suppressErr;
+    if (
+      suppressErr instanceof Error &&
+      suppressErr.message.includes('not deliverable')
+    )
+      throw suppressErr;
     // Suppression API itself failed — proceed optimistically
-    console.warn(`[BetterAuth] ⚠ Suppression check failed for ${to}: ${(suppressErr as Error).message}`);
+    console.warn(
+      `[BetterAuth] ⚠ Suppression check failed for ${to}: ${(suppressErr as Error).message}`,
+    );
   }
 
   console.log(`[BetterAuth] 📧 Sending "${subject}" → ${to}`);
@@ -142,34 +152,45 @@ async function sendMail(
     response = await fetch('https://api.resend.com/emails', {
       method: 'POST',
       headers: {
-        'Authorization': `Bearer ${_resendApiKey}`,
+        Authorization: `Bearer ${_resendApiKey}`,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({ from: FROM_EMAIL, to: [to], subject, html }),
     });
   } catch (networkErr) {
-    const msg = networkErr instanceof Error ? networkErr.message : String(networkErr);
-    console.error(`[BetterAuth] ❌ Network error sending email to ${to}: ${msg}`);
+    const msg =
+      networkErr instanceof Error ? networkErr.message : String(networkErr);
+    console.error(
+      `[BetterAuth] ❌ Network error sending email to ${to}: ${msg}`,
+    );
     throw new Error('Failed to reach email service. Please try again.');
   }
 
   if (!response.ok) {
     const errBody = await response.text().catch(() => 'unknown');
-    console.error(`[BetterAuth] ❌ Resend API ${response.status} for ${to}: ${errBody}`);
+    console.error(
+      `[BetterAuth] ❌ Resend API ${response.status} for ${to}: ${errBody}`,
+    );
     let reason = 'The verification email could not be delivered.';
     try {
       const parsed = JSON.parse(errBody) as { name?: string };
       if (parsed.name === 'validation_error' || response.status === 422)
         reason = 'Invalid email address — please check and try again.';
-      else if (response.status === 403) reason = 'Email sending not authorised. Please contact support.';
-      else if (response.status === 429) reason = 'Too many attempts. Please wait and try again.';
-    } catch { /* keep default reason */ }
+      else if (response.status === 403)
+        reason = 'Email sending not authorised. Please contact support.';
+      else if (response.status === 429)
+        reason = 'Too many attempts. Please wait and try again.';
+    } catch {
+      /* keep default reason */
+    }
     throw new Error(reason);
   }
 
-  const result = await response.json() as { id?: string };
+  const result = (await response.json()) as { id?: string };
   const emailId = result.id;
-  console.log(`[BetterAuth] ✅ Accepted by Resend for ${to} — id: ${emailId ?? 'unknown'}`);
+  console.log(
+    `[BetterAuth] ✅ Accepted by Resend for ${to} — id: ${emailId ?? 'unknown'}`,
+  );
 
   if (!emailId) return;
 
@@ -180,19 +201,22 @@ async function sendMail(
   for (const delay of POLL_DELAYS_MS) {
     await new Promise<void>((r) => setTimeout(r, delay));
     try {
-      const statusRes = await fetch(`https://api.resend.com/emails/${emailId}`, {
-        headers: { 'Authorization': `Bearer ${_resendApiKey}` },
-      });
+      const statusRes = await fetch(
+        `https://api.resend.com/emails/${emailId}`,
+        {
+          headers: { Authorization: `Bearer ${_resendApiKey}` },
+        },
+      );
       if (!statusRes.ok) break;
 
-      const { status = '' } = await statusRes.json() as { status?: string };
+      const { status = '' } = (await statusRes.json()) as { status?: string };
       console.log(`[BetterAuth] 📊 Poll status for ${to}: "${status}"`);
 
       if (status === 'bounced') {
         console.error(`[BetterAuth] ❌ Bounce confirmed for ${to}`);
         throw new Error(
           'Verification email bounced — this address does not exist or cannot receive mail. ' +
-          'Please check your email address and try again.',
+            'Please check your email address and try again.',
         );
       }
       if (status === 'delivered') {
@@ -201,8 +225,11 @@ async function sendMail(
       }
       // 'sent' / 'queued' = still in-flight, keep polling
     } catch (pollErr) {
-      if (pollErr instanceof Error && pollErr.message.includes('bounced')) throw pollErr;
-      console.warn(`[BetterAuth] ⚠ Poll failed for ${to}: ${(pollErr as Error).message}`);
+      if (pollErr instanceof Error && pollErr.message.includes('bounced'))
+        throw pollErr;
+      console.warn(
+        `[BetterAuth] ⚠ Poll failed for ${to}: ${(pollErr as Error).message}`,
+      );
       break;
     }
   }
@@ -273,7 +300,7 @@ const _auth: any = betterAuth({
   // the 15-min window resets. This was causing "verification email not sent".
   rateLimit: {
     window: 10 * 60, // 10 minutes (seconds)
-    max: 100,        // 100 requests per window per IP — blocks abuse, not real users
+    max: 100, // 100 requests per window per IP — blocks abuse, not real users
     storage: 'memory',
   },
 
@@ -312,7 +339,9 @@ const _auth: any = betterAuth({
       user: { email: string };
       url: string;
     }) => {
-      console.log(`[BetterAuth] 🔐 sendVerificationEmail triggered for ${user.email}`);
+      console.log(
+        `[BetterAuth] 🔐 sendVerificationEmail triggered for ${user.email}`,
+      );
       console.log(`[BetterAuth] 🔗 Verification URL: ${url}`);
       try {
         await sendMail(
@@ -426,7 +455,11 @@ const _auth: any = betterAuth({
         // we wait 300 ms then check whether a 'credential' Account row now
         // exists for this user. If it does → preRegister handled it → skip.
         // If not → pure OAuth user → send welcome here.
-        after: async (user: { id?: string; email: string; name?: string | null }) => {
+        after: async (user: {
+          id?: string;
+          email: string;
+          name?: string | null;
+        }) => {
           const apiKey = process.env.SMTP_PASS;
           if (!apiKey) return;
 
@@ -447,15 +480,26 @@ const _auth: any = betterAuth({
 
             const name = user.name ?? user.email.split('@')[0];
             const from = process.env.EMAIL_FROM ?? 'Apio <noreply@apio.one>';
-            const dash = (process.env.FRONTEND_URL ?? 'https://apio.one') + '/projects';
+            const dash =
+              (process.env.FRONTEND_URL ?? 'https://apio.one') + '/projects';
             const html = welcomeTemplate(name, dash);
 
             // Non-blocking — never delay OAuth redirect
             fetch('https://api.resend.com/emails', {
               method: 'POST',
-              headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
-              body: JSON.stringify({ from, to: [user.email], subject: 'Welcome to Apio!', html }),
-            }).catch(() => { /* non-critical — never throw */ });
+              headers: {
+                Authorization: `Bearer ${apiKey}`,
+                'Content-Type': 'application/json',
+              },
+              body: JSON.stringify({
+                from,
+                to: [user.email],
+                subject: 'Welcome to Apio!',
+                html,
+              }),
+            }).catch(() => {
+              /* non-critical — never throw */
+            });
           });
         },
       },
@@ -484,7 +528,7 @@ const _auth: any = betterAuth({
     before: async (ctx: { path: string; request: Request }) => {
       if (ctx.path === '/sign-in/email') {
         try {
-          const body = await ctx.request.clone().json() as { email?: string };
+          const body = (await ctx.request.clone().json()) as { email?: string };
           if (body?.email) {
             await autoVerify2faUser(body.email);
           }
@@ -497,6 +541,7 @@ const _auth: any = betterAuth({
   },
 });
 
-export const auth: any = _auth;
+// Export with full inferred type — never cast to `any` as that defeats TS safety.
+export const auth = _auth;
 
 export type Auth = typeof _auth;

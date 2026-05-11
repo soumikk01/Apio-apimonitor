@@ -8,8 +8,9 @@ import { useAuth } from '@/hooks/useAuth';
 import { Shimmer, ShimmerBlock, ShimmerRow } from '@/components/Shimmer/Shimmer';
 import { AVATARS } from './avatars';
 import styles from './AccountPage.module.scss';
+import { API_BASE } from '@/lib/queries';
 
-const API = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000/api/v1';
+const API = API_BASE;
 
 interface Stats {
   totalProjects: number;

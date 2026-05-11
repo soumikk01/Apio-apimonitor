@@ -27,16 +27,27 @@ export class AuthService {
 
   // ── Send welcome email (non-blocking, fire-and-forget) ───────────────────
   private sendWelcomeEmail(email: string, name: string): void {
-    const apiKey    = this.config.get<string>('SMTP_PASS');
+    const apiKey = this.config.get<string>('SMTP_PASS');
     const fromEmail = this.config.get('EMAIL_FROM', 'Apio <noreply@apio.one>');
-    const dashUrl   = this.config.get('FRONTEND_URL', 'https://apio.one') + '/projects';
+    const dashUrl =
+      this.config.get('FRONTEND_URL', 'https://apio.one') + '/projects';
     if (!apiKey) return;
     const html = welcomeTemplate(name, dashUrl);
     fetch('https://api.resend.com/emails', {
       method: 'POST',
-      headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ from: fromEmail, to: [email], subject: 'Welcome to Apio!', html }),
-    }).catch(() => { /* non-critical — never throw */ });
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        from: fromEmail,
+        to: [email],
+        subject: 'Welcome to Apio!',
+        html,
+      }),
+    }).catch(() => {
+      /* non-critical — never throw */
+    });
   }
 
   // ── Reset password via BetterAuth OTP + send security email ────────────────
@@ -57,17 +68,28 @@ export class AuthService {
     });
 
     if (!resetRes.ok) {
-      const errData = await resetRes.json().catch(() => ({})) as { message?: string };
+      const errData = (await resetRes.json().catch(() => ({}))) as {
+        message?: string;
+      };
       const msg = errData.message ?? '';
-      if (msg.toLowerCase().includes('invalid') || msg.toLowerCase().includes('expired'))
-        throw new BadRequestException('Invalid or expired code. Please request a new one.');
+      if (
+        msg.toLowerCase().includes('invalid') ||
+        msg.toLowerCase().includes('expired')
+      )
+        throw new BadRequestException(
+          'Invalid or expired code. Please request a new one.',
+        );
       throw new BadRequestException(msg || 'Failed to reset password.');
     }
 
     // ── 2. Extract IP address ───────────────────────────────────────────────────
-    const fwd   = reqHeaders['x-forwarded-for'];
-    const rawIp = Array.isArray(fwd) ? fwd[0] : (fwd ?? reqHeaders['x-real-ip'] ?? 'unknown');
-    const ip    = (Array.isArray(rawIp) ? rawIp[0] : rawIp)?.split(',')[0]?.trim() ?? 'unknown';
+    const fwd = reqHeaders['x-forwarded-for'];
+    const rawIp = Array.isArray(fwd)
+      ? fwd[0]
+      : (fwd ?? reqHeaders['x-real-ip'] ?? 'unknown');
+    const ip =
+      (Array.isArray(rawIp) ? rawIp[0] : rawIp)?.split(',')[0]?.trim() ??
+      'unknown';
 
     // ── 3. Geo-IP lookup (ip-api.com — free, no key needed) ─────────────────────
     let location = 'Unknown location';
@@ -78,11 +100,20 @@ export class AuthService {
           { signal: AbortSignal.timeout(3000) },
         );
         if (geo.ok) {
-          const g = await geo.json() as { status: string; city?: string; regionName?: string; country?: string };
+          const g = (await geo.json()) as {
+            status: string;
+            city?: string;
+            regionName?: string;
+            country?: string;
+          };
           if (g.status === 'success')
-            location = [g.city, g.regionName, g.country].filter(Boolean).join(', ');
+            location = [g.city, g.regionName, g.country]
+              .filter(Boolean)
+              .join(', ');
         }
-      } catch { /* proceed with unknown */ }
+      } catch {
+        /* proceed with unknown */
+      }
     }
 
     // ── 4. Parse user-agent to a human-readable device string ──────────────────
@@ -96,7 +127,7 @@ export class AuthService {
     const name = userRow?.name ?? body.email.split('@')[0];
 
     // ── 6. Send security email (non-blocking) ──────────────────────────────
-    const apiKey    = this.config.get<string>('SMTP_PASS');
+    const apiKey = this.config.get<string>('SMTP_PASS');
     const fromEmail = this.config.get('EMAIL_FROM', 'Apio <noreply@apio.one>');
     if (apiKey) {
       const html = passwordChangedTemplate({
@@ -109,14 +140,19 @@ export class AuthService {
       });
       fetch('https://api.resend.com/emails', {
         method: 'POST',
-        headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          'Content-Type': 'application/json',
+        },
         body: JSON.stringify({
           from: fromEmail,
           to: [body.email],
           subject: '⚠️ Your Apio password was changed',
           html,
         }),
-      }).catch(() => { /* non-critical */ });
+      }).catch(() => {
+        /* non-critical */
+      });
     }
 
     return { success: true };
@@ -140,7 +176,9 @@ export class AuthService {
       select: { emailVerified: true },
     });
     if (existing?.emailVerified) {
-      throw new ConflictException('An account with this email already exists. Please log in.');
+      throw new ConflictException(
+        'An account with this email already exists. Please log in.',
+      );
     }
 
     // ── Delete any stale pending registration for same email ────────────────
@@ -163,7 +201,7 @@ export class AuthService {
 
     // ── Send verification email via Resend HTTP API ─────────────────────────
     const authUrl = this.config.get('AUTH_URL', 'http://localhost:3001');
-    const apiKey  = this.config.get<string>('SMTP_PASS');
+    const apiKey = this.config.get<string>('SMTP_PASS');
     const fromEmail = this.config.get('EMAIL_FROM', 'Apio <noreply@apio.one>');
 
     if (!apiKey) throw new BadRequestException('Email service not configured.');
@@ -173,8 +211,16 @@ export class AuthService {
 
     const res = await fetch('https://api.resend.com/emails', {
       method: 'POST',
-      headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ from: fromEmail, to: [email], subject: 'Verify your Apio account', html }),
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        from: fromEmail,
+        to: [email],
+        subject: 'Verify your Apio account',
+        html,
+      }),
     });
 
     if (!res.ok) {
@@ -183,12 +229,16 @@ export class AuthService {
       await this.prisma.verification.deleteMany({
         where: { identifier: this.PENDING_PREFIX + email },
       });
-      let reason = 'Failed to send verification email. Please check your email address.';
+      let reason =
+        'Failed to send verification email. Please check your email address.';
       try {
         const parsed = JSON.parse(body) as { name?: string };
         if (parsed.name === 'validation_error' || res.status === 422)
-          reason = 'This email address is invalid. Please use a real email address.';
-      } catch { /* keep default */ }
+          reason =
+            'This email address is invalid. Please use a real email address.';
+      } catch {
+        /* keep default */
+      }
       throw new BadRequestException(reason);
     }
 
@@ -197,28 +247,36 @@ export class AuthService {
     // A background check runs after 3 s to catch fast bounces from non-Gmail
     // providers. If a bounce is detected the pending record is cleaned up so
     // the user can retry with a valid address — but we never block the response.
-    const resBody = await res.json() as { id?: string };
+    const resBody = (await res.json()) as { id?: string };
     const emailId = resBody.id;
     if (emailId) {
       // Capture vars for closure
       const pendingPrefix = this.PENDING_PREFIX;
-      const prismaRef     = this.prisma;
-      const apiKeyRef     = apiKey;
+      const prismaRef = this.prisma;
+      const apiKeyRef = apiKey;
 
       setTimeout(() => {
         fetch(`https://api.resend.com/emails/${emailId}`, {
-          headers: { 'Authorization': `Bearer ${apiKeyRef}` },
+          headers: { Authorization: `Bearer ${apiKeyRef}` },
         })
-          .then((check) => check.ok ? check.json() : null)
+          .then((check) => (check.ok ? check.json() : null))
           .then((data: { status?: string } | null) => {
             if (data?.status === 'bounced') {
-              console.warn(`[AuthService] Bounce detected for ${email} — cleaning up pending record`);
-              prismaRef.verification.deleteMany({
-                where: { identifier: pendingPrefix + email },
-              }).catch(() => { /* non-critical */ });
+              console.warn(
+                `[AuthService] Bounce detected for ${email} — cleaning up pending record`,
+              );
+              prismaRef.verification
+                .deleteMany({
+                  where: { identifier: pendingPrefix + email },
+                })
+                .catch(() => {
+                  /* non-critical */
+                });
             }
           })
-          .catch(() => { /* poll failure — proceed optimistically */ });
+          .catch(() => {
+            /* poll failure — proceed optimistically */
+          });
       }, 3000);
     }
 
@@ -236,11 +294,19 @@ export class AuthService {
     });
 
     if (!record) {
-      throw new NotFoundException('Verification link is invalid or has expired. Please register again.');
+      throw new NotFoundException(
+        'Verification link is invalid or has expired. Please register again.',
+      );
     }
 
-    const { token: storedToken, name, hashedPassword } = JSON.parse(record.value) as {
-      token: string; name: string; hashedPassword: string;
+    const {
+      token: storedToken,
+      name,
+      hashedPassword,
+    } = JSON.parse(record.value) as {
+      token: string;
+      name: string;
+      hashedPassword: string;
     };
 
     if (storedToken !== token) {
@@ -248,7 +314,9 @@ export class AuthService {
     }
 
     // ── Check user not already created (race condition guard) ───────────────
-    const alreadyExists = await this.prisma.user.findUnique({ where: { email: normalEmail } });
+    const alreadyExists = await this.prisma.user.findUnique({
+      where: { email: normalEmail },
+    });
     if (alreadyExists) {
       await this.prisma.verification.delete({ where: { id: record.id } });
       return { message: 'Account already verified. Please log in.' };
@@ -417,18 +485,18 @@ function parseDevice(ua: string): string {
   if (!ua) return 'Unknown device';
 
   let browser = 'Unknown browser';
-  if (ua.includes('Edg/'))       browser = 'Microsoft Edge';
+  if (ua.includes('Edg/')) browser = 'Microsoft Edge';
   else if (ua.includes('OPR/') || ua.includes('Opera')) browser = 'Opera';
-  else if (ua.includes('Chrome/'))  browser = 'Chrome';
+  else if (ua.includes('Chrome/')) browser = 'Chrome';
   else if (ua.includes('Firefox/')) browser = 'Firefox';
   else if (ua.includes('Safari/') && !ua.includes('Chrome')) browser = 'Safari';
 
   let os = 'Unknown OS';
-  if (ua.includes('Windows NT'))    os = 'Windows';
+  if (ua.includes('Windows NT')) os = 'Windows';
   else if (ua.includes('Mac OS X')) os = 'macOS';
-  else if (ua.includes('Android'))  os = 'Android';
+  else if (ua.includes('Android')) os = 'Android';
   else if (ua.includes('iPhone') || ua.includes('iPad')) os = 'iOS';
-  else if (ua.includes('Linux'))    os = 'Linux';
+  else if (ua.includes('Linux')) os = 'Linux';
 
   return `${browser} on ${os}`;
 }

@@ -1,14 +1,16 @@
 'use client';
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import { fetchWithAuth } from '@/lib/fetchWithAuth';
+import { useQuery } from '@tanstack/react-query';
+import { queryKeys, fetchProjects, API_BASE } from '@/lib/queries';
 import { toast } from 'sonner';
 import { RefreshCw } from 'lucide-react';
 import { format } from 'date-fns';
 import { Shimmer } from '@/components/Shimmer/Shimmer';
 import styles from './AccountAuditPage.module.scss';
 
-
-const API = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000/api/v1';
+// Use the shared API base URL constant — never duplicate the env-var fallback.
+const API = API_BASE;
 
 interface AuditLog {
   id: string;
@@ -24,19 +26,25 @@ export default function AccountAuditPage() {
   const [logs, setLogs] = useState<AuditLog[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState('');
-  const [projectsList, setProjectsList] = useState<{ id: string; name: string }[]>([]);
   const [selectedProject, setSelectedProject] = useState<string>('');
 
-  // ── Fetch audit logs — accepts an AbortSignal so previous requests are cancelled
-  // when the filter changes, preventing race conditions / stale responses.
+  // ── Projects list — reads from the shared React Query cache so no extra
+  // network request is fired when the Audit page is visited after the dashboard.
+  const { data: projectsList = [] } = useQuery({
+    queryKey: queryKeys.projects.list(),
+    queryFn: fetchProjects,
+    staleTime: 60_000,
+  });
+
+  // ── Fetch audit logs — accepts an AbortSignal so previous requests are
+  // cancelled when the filter changes, preventing race conditions / stale state.
   const loadLogs = useCallback(async (signal?: AbortSignal) => {
     setLoading(true);
     setLoadError('');
     try {
       const url = new URL(`${API}/audit`);
-      if (selectedProject) {
-        url.searchParams.set('projectId', selectedProject);
-      }
+      if (selectedProject) url.searchParams.set('projectId', selectedProject);
+
       const res = await fetchWithAuth(url.toString(), { signal });
       if (res.ok) {
         const data = await res.json();
@@ -45,7 +53,8 @@ export default function AccountAuditPage() {
         throw new Error(`Server error ${res.status}`);
       }
     } catch (err) {
-      if ((err as Error).name === 'AbortError') return; // filter changed — ignore stale response
+      // AbortError is expected when filter changes or on unmount — swallow silently.
+      if ((err as Error).name === 'AbortError') return;
       const msg = (err as Error).message || 'Failed to load audit logs';
       setLoadError(msg);
       toast.error(msg);
@@ -54,30 +63,31 @@ export default function AccountAuditPage() {
     }
   }, [selectedProject]);
 
-  const loadProjects = useCallback(async () => {
-    try {
-      const res = await fetchWithAuth(`${API}/projects`);
-      if (res.ok) {
-        const data = await res.json();
-        setProjectsList(data);
-      }
-    } catch {
-      /* ignore */
-    }
-  }, []);
-
-  useEffect(() => {
-    void loadProjects();
-  }, [loadProjects]);
-
-  // Cancel previous request automatically when selectedProject changes
+  // Cancel the previous request automatically whenever selectedProject changes
+  // (or on component unmount).
   useEffect(() => {
     const controller = new AbortController();
     void loadLogs(controller.signal);
     return () => controller.abort();
   }, [loadLogs]);
 
-  // Try to define a default date range string just to match UI mockup
+  // ── Manual Refresh — tracked in a ref so rapid clicks abort the previous
+  // in-flight request before starting a new one (prevents race conditions).
+  const manualCtrlRef = useRef<AbortController | null>(null);
+
+  const handleRefresh = useCallback(() => {
+    // Abort any previous manual refresh that is still in flight.
+    manualCtrlRef.current?.abort();
+    const controller = new AbortController();
+    manualCtrlRef.current = controller;
+    void loadLogs(controller.signal);
+  }, [loadLogs]);
+
+  // Cleanup the manual controller on unmount.
+  useEffect(() => {
+    return () => { manualCtrlRef.current?.abort(); };
+  }, []);
+
   const dateRangeStr = `${format(new Date(Date.now() - 86400000), 'dd MMM, HH:mm')} - ${format(new Date(), 'dd MMM, HH:mm')}`;
 
   return (
@@ -109,13 +119,35 @@ export default function AccountAuditPage() {
             <span className={styles.filterText}>{dateRangeStr}</span>
             <span className={styles.filterText} style={{ margin: '0 0.5rem' }}>•</span>
             <span className={styles.filterText}>Viewing {logs.length} logs in total</span>
-            
-            <button className={styles.refreshBtn} onClick={() => { const c = new AbortController(); void loadLogs(c.signal); }} disabled={loading}>
+
+            <button
+              className={styles.refreshBtn}
+              onClick={handleRefresh}
+              disabled={loading}
+              aria-label="Refresh audit logs"
+            >
               <RefreshCw size={14} style={loading ? { animation: 'spin 1s linear infinite' } : {}} />
               Refresh
             </button>
           </div>
         </div>
+
+        {loadError && (
+          <div
+            role="alert"
+            style={{
+              padding: '0.75rem 1rem',
+              marginBottom: '1rem',
+              borderRadius: '8px',
+              background: 'rgba(239,68,68,0.1)',
+              border: '1px solid rgba(239,68,68,0.3)',
+              color: '#ef4444',
+              fontSize: '0.875rem',
+            }}
+          >
+            {loadError}
+          </div>
+        )}
 
         <div className={styles.tableWrapper}>
           <table className={styles.table}>

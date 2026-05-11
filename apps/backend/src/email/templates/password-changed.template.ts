@@ -4,9 +4,9 @@ export interface PasswordChangedContext {
   name: string;
   email: string;
   changedAt: Date;
-  location: string;   // "Mumbai, India" or "Unknown location"
-  ip: string;         // "103.x.x.x" or "unknown"
-  device: string;     // browser/OS hint
+  location: string; // "Mumbai, India" or "Unknown location"
+  ip: string; // "103.x.x.x" or "unknown"
+  device: string; // browser/OS hint
 }
 
 /**

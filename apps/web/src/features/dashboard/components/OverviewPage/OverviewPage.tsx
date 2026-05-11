@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect } from 'react';
+import { useEffect, useMemo } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { useQuery } from '@tanstack/react-query';
 import Link from 'next/link';
@@ -34,10 +34,13 @@ export default function OverviewPage() {
   });
 
   // ── Resolve active project ID ────────────────────────────────────────────────
-  const resolvedProjectId = paramId ?? (() => {
+  // useMemo prevents the localStorage read from running as a render-phase side
+  // effect, which would be unsafe under React 18 Strict Mode double-invoke.
+  const resolvedProjectId = useMemo(() => {
+    if (paramId) return paramId;
     const saved = typeof window !== 'undefined' ? localStorage.getItem('activeProjectId') : null;
     return projects?.find(p => p.id === saved)?.id ?? projects?.[0]?.id ?? '';
-  })();
+  }, [paramId, projects]);
 
   // ── Project detail — shows instantly from cache (5 min stale time) ──────────
   const { data: project, isLoading: projectLoading } = useQuery({

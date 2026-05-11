@@ -2,19 +2,20 @@
 import { authStorage, fetchWithAuth } from '@/lib/fetchWithAuth';
 import { toast } from 'sonner';
 
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import Link from 'next/link';
 import { useRouter, usePathname, useSearchParams } from 'next/navigation';
 import { Moon, Sun, Droplets, Monitor, User, ClipboardList, MessageSquare } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
 import { useTheme } from '@/hooks/useTheme';
 import { useQuery } from '@tanstack/react-query';
-import { queryKeys, fetchProjects as fetchProjectsList } from '@/lib/queries';
+import { queryKeys, fetchProjects as fetchProjectsList, API_BASE } from '@/lib/queries';
 import { AVATARS } from '@/features/dashboard/components/AccountPage/avatars';
 import { openAiPanel } from '@/components/AiChatPanel/AiChatPanel';
 import styles from './TopNavbar.module.scss';
 
-const API = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000/api/v1';
+// Use the shared constant — avoids repeating the env-var fallback across files.
+const API = API_BASE;
 
 interface Project {
   id: string;

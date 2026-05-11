@@ -33,8 +33,8 @@ export class AuthController {
    * Rate-limited: 10 requests per 60 seconds per IP.
    */
   @Throttle({
-    short: { ttl: 60_000, limit: 10 },
-    medium: { ttl: 60_000, limit: 10 },
+    short: { ttl: 60_000, limit: 10 }, // 10 per min (burst)
+    medium: { ttl: 300_000, limit: 30 }, // 30 per 5 min (sustained)
   })
   @Get('check-email')
   async checkEmail(@Query('email') email: string) {
@@ -49,8 +49,8 @@ export class AuthController {
    * Rate-limited: 10 requests per 60 seconds per IP.
    */
   @Throttle({
-    short: { ttl: 60_000, limit: 10 },
-    medium: { ttl: 60_000, limit: 10 },
+    short: { ttl: 60_000, limit: 10 }, // 10 per min (burst)
+    medium: { ttl: 300_000, limit: 30 }, // 30 per 5 min (sustained)
   })
   @Get('check-email-exists')
   async checkEmailExists(@Query('email') email: string) {
@@ -61,7 +61,6 @@ export class AuthController {
     });
     return { exists: !!user };
   }
-
 
   /**
    * POST /auth/verify-otp
@@ -106,8 +105,8 @@ export class AuthController {
    * Rate-limited: 3 per 5 minutes per IP.
    */
   @Throttle({
-    short: { ttl: 300_000, limit: 3 },
-    medium: { ttl: 300_000, limit: 3 },
+    short: { ttl: 300_000, limit: 3 }, // 3 per 5 min (burst)
+    medium: { ttl: 900_000, limit: 5 }, // 5 per 15 min (sustained)
   })
   @Post('pre-register')
   @HttpCode(HttpStatus.OK)
@@ -122,8 +121,8 @@ export class AuthController {
    * Rate-limited: 10 per 60 seconds per IP.
    */
   @Throttle({
-    short: { ttl: 60_000, limit: 10 },
-    medium: { ttl: 60_000, limit: 10 },
+    short: { ttl: 60_000, limit: 10 }, // 10 per min (burst)
+    medium: { ttl: 300_000, limit: 20 }, // 20 per 5 min (sustained)
   })
   @Get('verify-pending')
   async verifyPending(
@@ -140,8 +139,8 @@ export class AuthController {
    * Rate-limited: 5 per 5 minutes per IP.
    */
   @Throttle({
-    short: { ttl: 300_000, limit: 5 },
-    medium: { ttl: 300_000, limit: 5 },
+    short: { ttl: 300_000, limit: 5 }, // 5 per 5 min (burst)
+    medium: { ttl: 900_000, limit: 8 }, // 8 per 15 min (sustained)
   })
   @Post('reset-password')
   @HttpCode(HttpStatus.OK)
@@ -162,8 +161,8 @@ export class AuthController {
    * 3 requests per 5 minutes per IP — prevents account spam
    */
   @Throttle({
-    short: { ttl: 300_000, limit: 3 },
-    medium: { ttl: 300_000, limit: 3 },
+    short: { ttl: 300_000, limit: 3 }, // 3 per 5 min (burst)
+    medium: { ttl: 900_000, limit: 5 }, // 5 per 15 min (sustained)
   })
   @Post('register')
   register(@Body() dto: RegisterDto) {
@@ -175,8 +174,8 @@ export class AuthController {
    * 5 requests per 60 seconds per IP — brute-force protection
    */
   @Throttle({
-    short: { ttl: 60_000, limit: 5 },
-    medium: { ttl: 60_000, limit: 5 },
+    short: { ttl: 60_000, limit: 5 }, // 5 per min (burst)
+    medium: { ttl: 600_000, limit: 15 }, // 15 per 10 min (sustained)
   })
   @Post('login')
   @HttpCode(HttpStatus.OK)
@@ -190,8 +189,8 @@ export class AuthController {
    * Used exclusively by the Admin Panel — tokens cannot access user-only routes.
    */
   @Throttle({
-    short: { ttl: 60_000, limit: 5 },
-    medium: { ttl: 60_000, limit: 5 },
+    short: { ttl: 60_000, limit: 5 }, // 5 per min (burst)
+    medium: { ttl: 600_000, limit: 10 }, // 10 per 10 min (sustained — stricter for admin)
   })
   @Post('admin/login')
   @HttpCode(HttpStatus.OK)
@@ -204,8 +203,8 @@ export class AuthController {
    * 30 requests per 60 seconds — generous for silent token renewal across tabs
    */
   @Throttle({
-    short: { ttl: 60_000, limit: 30 },
-    medium: { ttl: 60_000, limit: 30 },
+    short: { ttl: 60_000, limit: 30 }, // 30 per min (generous — multi-tab silent renewal)
+    medium: { ttl: 300_000, limit: 120 }, // 120 per 5 min (sustained)
   })
   @Post('refresh')
   @HttpCode(HttpStatus.OK)

@@ -6,11 +6,13 @@ import { authStorage, fetchWithAuth } from '@/lib/fetchWithAuth';
 import { toast } from 'sonner';
 import styles from './SecurityPage.module.scss';
 
+import { API_BASE } from '@/lib/queries';
+
 const BETTER_AUTH = process.env.NEXT_PUBLIC_API_URL
   ? `${process.env.NEXT_PUBLIC_API_URL.replace('/api/v1', '')}/api/v1/auth/better`
   : 'http://localhost:4000/api/v1/auth/better';
 
-const API = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000/api/v1';
+const API = API_BASE;
 
 type Step =
   | 'idle'          // main view
@@ -24,7 +26,9 @@ interface TotpSetup {
 }
 
 export default function SecurityPage() {
-  const { user } = useAuth();
+  // `user` is not needed directly in this component — auth state is managed
+  // via the session token and BetterAuth API calls.
+  useAuth();
 
   const [is2FAEnabled, setIs2FAEnabled] = useState(false);
   const [step, setStep] = useState<Step>('idle');

@@ -2,7 +2,10 @@ import { baseTemplate, footerNote } from './base.template';
 
 export type OtpType = 'sign-in' | 'email-verification' | 'forget-password';
 
-const OTP_COPY: Record<OtpType, { heading: string; sub: string; expiry: string }> = {
+const OTP_COPY: Record<
+  OtpType,
+  { heading: string; sub: string; expiry: string }
+> = {
   'sign-in': {
     heading: 'Your sign-in code',
     sub: 'Use this code to complete your sign-in.',

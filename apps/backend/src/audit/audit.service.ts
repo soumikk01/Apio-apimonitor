@@ -31,10 +31,7 @@ export class AuditService {
       const project = await this.prisma.project.findFirst({
         where: {
           id: projectId,
-          OR: [
-            { userId },
-            { members: { some: { userId } } },
-          ],
+          OR: [{ userId }, { members: { some: { userId } } }],
         },
       });
       if (!project)

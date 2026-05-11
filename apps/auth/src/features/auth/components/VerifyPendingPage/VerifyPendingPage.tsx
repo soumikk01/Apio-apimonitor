@@ -11,25 +11,30 @@ interface Props {
 type Status = 'verifying' | 'success' | 'error' | 'expired';
 
 export default function VerifyPendingPage({ token, email }: Props) {
-  const [status, setStatus] = useState<Status>('verifying');
-  const [message, setMessage] = useState('');
+  // Derive the initial state synchronously — avoids calling setState inside an
+  // effect body (react-hooks/set-state-in-effect lint error).
+  const isInvalidLink = !token || !email;
+  const [status, setStatus] = useState<Status>(isInvalidLink ? 'error' : 'verifying');
+  const [message, setMessage] = useState<string>(
+    isInvalidLink ? 'Invalid verification link. Please register again.' : '',
+  );
 
   useEffect(() => {
-    if (!token || !email) {
-      setStatus('error');
-      setMessage('Invalid verification link. Please register again.');
-      return;
-    }
+    // Nothing to fetch — initial state already reflects the error.
+    if (!token || !email) return;
 
     const API = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000/api/v1';
     const url = `${API}/auth/verify-pending?token=${encodeURIComponent(token)}&email=${encodeURIComponent(email)}`;
 
-    fetch(url)
+    // AbortController so we can cancel the request if the component unmounts
+    // before the response arrives (prevents setState on an unmounted component).
+    const controller = new AbortController();
+
+    fetch(url, { signal: controller.signal })
       .then(async (res) => {
         const body = await res.json().catch(() => ({ message: '' })) as { message?: string; success?: boolean };
         if (res.ok) {
           setStatus('success');
-          // Redirect to login with success flag after 2 seconds
           setTimeout(() => {
             window.location.href = '/login?registered=true';
           }, 2000);
@@ -41,10 +46,15 @@ export default function VerifyPendingPage({ token, email }: Props) {
           setMessage(body.message ?? 'Verification failed. Please try again.');
         }
       })
-      .catch(() => {
+      .catch((err: unknown) => {
+        // AbortError is expected on unmount — swallow it silently.
+        if ((err as Error).name === 'AbortError') return;
         setStatus('error');
         setMessage('Network error. Please try again.');
       });
+
+    // Cleanup: cancel in-flight request when component unmounts or deps change.
+    return () => controller.abort();
   }, [token, email]);
 
   return (
