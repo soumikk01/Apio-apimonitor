@@ -10,11 +10,7 @@
 #    └──────────┬──────────┘
 #               │
 #    ┌──────────▼──────────┐
-#    │  deploy-vps         │  SSH into VPS → pull new image → restart container
-#    └──────────┬──────────┘
-#               │
-#    ┌──────────▼──────────┐
-#    │  deploy-vps         │  Deploy to VPS via SSH (Docker / PM2)
+#    │  deploy-vps         │  SSH → docker compose pull + up (Redis + backend)
 #    └──────────┬──────────┘
 #               │
 #    ┌──────────▼──────────┐
@@ -22,19 +18,19 @@
 #    └──────────┬──────────┘
 #               │
 #    ┌──────────▼──────────┐
-#    │  smoke-test         │  Hit /health on the live backend
+#    │  smoke-test         │  Hit /health on the live VPS backend
 #    └─────────────────────┘
 #
 # Required GitHub Secrets:
-#   VPS_HOST          — your VPS IP or domain (e.g. 123.456.789.0)
-#   VPS_USER          — SSH user (e.g. ubuntu, root)
-#   VPS_SSH_KEY       — private SSH key (contents of your ~/.ssh/id_rsa)
-#   VPS_PUBLIC_URL    — public URL of your backend (e.g. https://api.apio.one)
-#   VERCEL_TOKEN      — Vercel personal access token
-#   VERCEL_ORG_ID     — Vercel org/team ID
+#   VPS_HOST               — VPS IP or domain (e.g. 123.456.789.0)
+#   VPS_USER               — SSH user (e.g. ubuntu, root)
+#   VPS_SSH_KEY            — contents of your private SSH key (~/.ssh/id_rsa)
+#   VPS_PUBLIC_URL         — backend public URL (e.g. https://api.apio.one)
+#   VERCEL_TOKEN           — Vercel personal access token
+#   VERCEL_ORG_ID          — Vercel org/team ID
 #   VERCEL_WEB_PROJECT_ID  — Vercel project ID for apps/web
 #   VERCEL_AUTH_PROJECT_ID — Vercel project ID for apps/auth
-#   VERCEL_WEB_URL    — public URL of your web frontend (for smoke test)
+#   VERCEL_WEB_URL         — public URL of web frontend (for smoke test)
 # ─────────────────────────────────────────────────────────────────────────────
 
 name: CD
@@ -87,7 +83,6 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # Generate tags: latest + branch + short SHA
       - name: Docker metadata
         id: meta
         uses: docker/metadata-action@v5
@@ -118,7 +113,9 @@ jobs:
           echo "|-----|--------|" >> $GITHUB_STEP_SUMMARY
           echo "| \`latest\` | \`${{ steps.build.outputs.digest }}\` |" >> $GITHUB_STEP_SUMMARY
 
-  # ── 2. Deploy Backend — Cloud VPS via SSH ─────────────────────────────────────
+  # ── 2. Deploy Backend — Cloud VPS (docker compose) ───────────────────────────
+  # Redis container keeps running during deploys — only backend containers restart.
+  # This means zero cache loss and no cold-start penalty on each deploy.
   deploy-vps:
     name: 🖥️ Deploy Backend (VPS)
     runs-on: ubuntu-latest
@@ -132,33 +129,27 @@ jobs:
           host:     ${{ secrets.VPS_HOST }}
           username: ${{ secrets.VPS_USER }}
           key:      ${{ secrets.VPS_SSH_KEY }}
-          # Adjust the container name and image path to match your VPS setup.
-          # This assumes you run the backend as a Docker container named "apio-backend".
           script: |
             echo "🔐 Logging into GHCR..."
             echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io \
               -u ${{ github.actor }} --password-stdin
 
-            echo "📦 Pulling latest image..."
+            echo "📦 Pulling latest backend image..."
             docker pull ghcr.io/${{ env.IMAGE_NAME }}:latest
 
-            echo "🔄 Restarting container..."
-            docker stop apio-backend || true
-            docker rm   apio-backend || true
-            docker run -d \
-              --name apio-backend \
-              --restart unless-stopped \
-              -p 4000:4000 \
-              --env-file /etc/apio/.env \
-              ghcr.io/${{ env.IMAGE_NAME }}:latest
+            echo "🔄 Restarting backend containers (Redis stays up)..."
+            cd /opt/apio
 
-            echo "✅ Container restarted"
-            docker ps --filter name=apio-backend
+            # Only restart backend containers — Redis is NOT restarted so the
+            # cache (rate-limit counters, query cache, Socket.io state) is preserved.
+            docker compose --env-file /etc/apio/.env up -d --no-deps \
+              nestjs_1 nestjs_2 worker
 
-      - name: Wait for backend to come up
-        run: |
-          echo "Waiting 20s for backend to initialize..."
-          sleep 20
+            echo "✅ Deploy complete — container status:"
+            docker compose --env-file /etc/apio/.env ps
+
+      - name: Wait for backend to initialize
+        run: sleep 20
 
       - name: Verify backend health
         run: |
@@ -168,43 +159,6 @@ jobs:
             --retry-delay 10 \
             --retry-connrefused \
             "${{ secrets.VPS_PUBLIC_URL }}/health" | jq .
-
-  # ── 2b. Deploy Backend — VPS (SSH) ────────────────────────────────────────────
-  deploy-vps:
-    name: 🖥️ Deploy Backend (VPS)
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    needs: [build-and-publish]
-    # Uncomment and configure the environment if needed
-    # environment: production
-
-    steps:
-      - name: Deploy to VPS
-        uses: appleboy/ssh-action@v1.0.3
-        with:
-          host: ${{ secrets.VPS_HOST }}
-          username: ${{ secrets.VPS_USERNAME }}
-          key: ${{ secrets.VPS_SSH_KEY }}
-          # If your VPS uses a non-standard port, uncomment below:
-          # port: ${{ secrets.VPS_PORT }}
-          
-          # The script to run on the server. Adjust the directory and commands as needed.
-          script: |
-            echo "Deploying to VPS..."
-            
-            # --- Option A: Docker Compose ---
-            # cd /opt/apio-backend
-            # docker compose pull
-            # docker compose up -d
-            
-            # --- Option B: PM2 ---
-            cd /opt/apio-backend
-            git pull origin main
-            bun install
-            bun run build
-            pm2 restart apio-backend
-            
-            echo "Deployment completed successfully!"
 
   # ── 3. Deploy Frontend — Vercel (web + auth) ──────────────────────────────────
   deploy-vercel:
@@ -246,11 +200,7 @@ jobs:
     name: 🔥 Smoke Test
     runs-on: ubuntu-latest
     timeout-minutes: 5
-<<<<<<< Updated upstream
-    needs: [deploy-railway, deploy-vps, deploy-vercel]
-=======
     needs: [deploy-vps, deploy-vercel]
->>>>>>> Stashed changes
 
     steps:
       - name: Backend health check
