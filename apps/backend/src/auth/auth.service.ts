@@ -349,10 +349,23 @@ export class AuthService {
     // ── Clean up pending record ─────────────────────────────────────────────
     await this.prisma.verification.delete({ where: { id: record.id } });
 
+    // ── Generate one-time auto-login token (5-min TTL) ─────────────────────
+    // Stored so both the verify-pending page (email device) and the
+    // check-email polling page (registration device) can exchange it for a
+    // real BetterAuth session without requiring the user to type their password.
+    const autoLoginToken = crypto.randomBytes(32).toString('hex');
+    await this.prisma.verification.create({
+      data: {
+        identifier: 'auto-login::' + normalEmail,
+        value: autoLoginToken,
+        expiresAt: new Date(Date.now() + 5 * 60 * 1000), // 5 minutes
+      },
+    });
+
     // ── Send welcome email (non-blocking) ───────────────────────────────────
     this.sendWelcomeEmail(normalEmail, name || normalEmail.split('@')[0]);
 
-    return { success: true, email: normalEmail };
+    return { success: true, email: normalEmail, autoLoginToken };
   }
 
   async register(dto: RegisterDto) {
@@ -372,6 +385,68 @@ export class AuthService {
     });
 
     return this.signTokens(user.id, user.email);
+  }
+
+  // ── Auto-Login Token (one-time, 5-min TTL) ───────────────────────────────
+  // Created by verifyPendingRegistration. The token lets either the email-
+  // clicking device OR the registration device exchange it for a real
+  // BetterAuth session so the user never has to type their password.
+
+  /** Retrieve and consume the auto-login token for an email. Returns null if
+   *  not found or expired. */
+  async claimAutoLoginToken(email: string): Promise<string | null> {
+    const normalEmail = email.trim().toLowerCase();
+    const record = await this.prisma.verification.findFirst({
+      where: {
+        identifier: 'auto-login::' + normalEmail,
+        expiresAt: { gt: new Date() },
+      },
+    });
+    if (!record) return null;
+    await this.prisma.verification.delete({ where: { id: record.id } }).catch(() => {/* already deleted */});
+    return record.value;
+  }
+
+  /** Validate a claimed token and create a 30-day BetterAuth session directly
+   *  in Prisma. Returns the session token string (to be set as a cookie). */
+  async autoLoginWithToken(
+    email: string,
+    token: string,
+  ): Promise<string | null> {
+    const normalEmail = email.trim().toLowerCase();
+
+    // Retrieve + consume the stored auto-login token
+    const record = await this.prisma.verification.findFirst({
+      where: {
+        identifier: 'auto-login::' + normalEmail,
+        expiresAt: { gt: new Date() },
+      },
+    });
+    if (!record || record.value !== token) return null;
+    await this.prisma.verification.delete({ where: { id: record.id } }).catch(() => {/* already deleted */});
+
+    // Find the newly-created user
+    const user = await this.prisma.user.findUnique({
+      where: { email: normalEmail },
+    });
+    if (!user) return null;
+
+    // Create a BetterAuth-compatible session directly in Prisma
+    const sessionToken = crypto.randomBytes(32).toString('hex');
+    const sessionId = crypto.randomBytes(12).toString('hex'); // 24-char hex = valid ObjectId
+    const now = new Date();
+    await this.prisma.session.create({
+      data: {
+        id: sessionId,
+        userId: user.id,
+        token: sessionToken,
+        expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000), // 30 days
+        createdAt: now,
+        updatedAt: now,
+      },
+    });
+
+    return sessionToken;
   }
 
   async login(dto: LoginDto) {

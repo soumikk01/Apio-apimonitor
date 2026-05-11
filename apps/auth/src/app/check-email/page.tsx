@@ -201,6 +201,23 @@ function CheckEmailContent() {
             stopped = true;
             sessionStorage.removeItem(storageKey);
             const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? 'http://localhost:3000';
+            // Try to claim the one-time auto-login token — lets us skip the login page
+            try {
+              const claimRes = await fetch(
+                `${API}/auth/claim-auto-login?email=${encodeURIComponent(email)}`,
+                { cache: 'no-store' },
+              );
+              if (claimRes.ok) {
+                const claimData = await claimRes.json() as { token?: string | null };
+                if (claimData.token) {
+                  // Token available: backend creates session + redirects to /projects
+                  window.location.href =
+                    `${API}/auth/auto-login?token=${encodeURIComponent(claimData.token)}&email=${encodeURIComponent(email)}`;
+                  return;
+                }
+              }
+            } catch { /* network error — fall through */ }
+            // Token already consumed by email device — just navigate to /projects
             window.location.href = `${appUrl}/projects`;
           }
         }
