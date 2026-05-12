@@ -168,7 +168,7 @@ export class AuthController {
     @Query('email') email: string,
     @Res() res: Response,
   ) {
-    const appUrl = process.env.APP_URL ?? 'http://localhost:3000';
+    const appUrl = process.env.APP_URL ?? process.env.FRONTEND_URL ?? 'http://localhost:3000';
     const projectsUrl = `${appUrl}/projects`;
 
     if (!token?.trim() || !email?.trim()) {
