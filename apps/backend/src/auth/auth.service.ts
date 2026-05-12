@@ -435,16 +435,22 @@ export class AuthService {
     const sessionToken = crypto.randomBytes(32).toString('hex');
     const sessionId = crypto.randomBytes(12).toString('hex'); // 24-char hex = valid ObjectId
     const now = new Date();
-    await this.prisma.session.create({
-      data: {
-        id: sessionId,
-        userId: user.id,
-        token: sessionToken,
-        expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000), // 30 days
-        createdAt: now,
-        updatedAt: now,
-      },
-    });
+    try {
+      await this.prisma.session.create({
+        data: {
+          id: sessionId,
+          userId: user.id,
+          token: sessionToken,
+          expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000), // 30 days
+          createdAt: now,
+          updatedAt: now,
+        },
+      });
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error('[autoLoginWithToken] session.create failed:', msg);
+      return null;
+    }
 
     return sessionToken;
   }

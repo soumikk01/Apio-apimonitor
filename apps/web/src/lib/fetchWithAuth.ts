@@ -1,15 +1,14 @@
 /**
  * fetchWithAuth — production-hardened authenticated fetch wrapper
  *
- * Storage strategy (Supabase-style):
- *   accessToken  → localStorage  (survives page refresh)
- *   refreshToken → localStorage  (long-lived, rotated on every use)
+ * Storage strategy:
+ *   accessToken  → localStorage        (survives page refresh, read by JS for Bearer header)
+ *   refreshToken → HttpOnly cookie 'rt' (set by backend, NEVER readable by JS — XSS-proof)
  *
  * Key behaviors:
- *  - Singleton refresh deduplication: only ONE /auth/refresh call at a time
+ *  - Singleton refresh deduplication: only ONE /auth/refresh-secure call at a time
  *  - Transient errors (5xx/429/network) → session preserved, not cleared
  *  - Definitive 401/400 on refresh → session cleared (truly expired/revoked)
- *  - New tokens from auth app arrive via URL ?at=&rt= on login redirect
  */
 
 const API = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000/api/v1';
@@ -24,65 +23,47 @@ export const authStorage = {
     if (typeof window !== 'undefined') localStorage.setItem('access_token', t);
   },
 
-  getRefreshToken: (): string | null => {
-    if (typeof window === 'undefined') return null;
-    return localStorage.getItem('refresh_token');
-  },
-  setRefreshToken: (t: string): void => {
-    if (typeof window !== 'undefined') localStorage.setItem('refresh_token', t);
-  },
-
-  /** Wipe ALL auth state — called on logout or definitive token failure */
+  /** Wipe ALL client-side auth state. 'rt' HttpOnly cookie is cleared server-side. */
   clear: (): void => {
     if (typeof window === 'undefined') return;
     localStorage.removeItem('access_token');
-    localStorage.removeItem('refresh_token');
     localStorage.removeItem('activeProjectId');
     localStorage.removeItem('userAvatarIndex');
     sessionStorage.removeItem('access_token');
-    sessionStorage.removeItem('refresh_token');
   },
 
-  /** True only if we have at least one token (can attempt session restore) */
+  /** True only if we have an access token locally */
   hasSession: (): boolean => {
     if (typeof window === 'undefined') return false;
-    return !!(localStorage.getItem('access_token') || localStorage.getItem('refresh_token'));
+    return !!localStorage.getItem('access_token');
   },
 };
 
 // ── Singleton refresh ──────────────────────────────────────────────────────
-// One in-flight refresh shared across all concurrent callers.
 let _refreshPromise: Promise<string | null> | null = null;
 
 async function tryRefresh(): Promise<string | null> {
   if (_refreshPromise) return _refreshPromise;
 
   _refreshPromise = (async () => {
-    const rt = authStorage.getRefreshToken();
-    if (!rt) return null;
-
     try {
-      const res = await fetch(`${API}/auth/refresh`, {
+      // credentials:include → browser sends the 'rt' HttpOnly cookie automatically
+      const res = await fetch(`${API}/auth/refresh-secure`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ refreshToken: rt }),
+        credentials: 'include',
       });
 
-      // 401 / 400 = token definitively invalid → must re-login
       if (res.status === 401 || res.status === 400) {
         authStorage.clear();
         return null;
       }
-
-      // 429 / 5xx = transient → throw so callers DON'T clear the session
       if (!res.ok) throw new Error(`refresh_${res.status}`);
 
-      const data = await res.json() as { accessToken?: string; refreshToken?: string };
+      const data = await res.json() as { accessToken?: string };
       if (!data.accessToken) { authStorage.clear(); return null; }
 
       authStorage.setAccessToken(data.accessToken);
-      if (data.refreshToken) authStorage.setRefreshToken(data.refreshToken);
-
+      // Backend rotates the 'rt' cookie automatically in the Set-Cookie header
       return data.accessToken;
     } finally {
       _refreshPromise = null;
@@ -91,15 +72,6 @@ async function tryRefresh(): Promise<string | null> {
 
   return _refreshPromise;
 }
-
-/**
- * Drop-in replacement for fetch():
- *  1. Proactively refreshes token if it expires in < 5 min
- *  2. Attaches Bearer token from localStorage
- *  3. On 401 → silently refreshes and retries ONCE
- *  4. Transient errors → session preserved
- *  5. Definitive failure → session cleared
- */
 
 /** Parse JWT expiry without a library */
 function getTokenExpiresInMs(token: string | null): number {
@@ -113,8 +85,15 @@ function getTokenExpiresInMs(token: string | null): number {
   }
 }
 
+/**
+ * Drop-in replacement for fetch():
+ *  1. Proactively refreshes token if it expires in < 5 min
+ *  2. Attaches Bearer token from localStorage
+ *  3. On 401 → silently refreshes via HttpOnly cookie and retries ONCE
+ *  4. Transient errors → session preserved
+ *  5. Definitive failure → session cleared
+ */
 export async function fetchWithAuth(url: string, options: RequestInit = {}): Promise<Response> {
-  // ── Proactive refresh: if token expires in < 5 min, refresh now ──────────
   const currentToken = authStorage.getAccessToken();
   const expiresIn = getTokenExpiresInMs(currentToken);
   if (expiresIn > 0 && expiresIn < 5 * 60 * 1000) {
@@ -133,15 +112,13 @@ export async function fetchWithAuth(url: string, options: RequestInit = {}): Pro
   let res = await makeReq(authStorage.getAccessToken());
   if (res.status !== 401) return res;
 
-  // ── Silent refresh ────────────────────────────────────────────────────
   try {
     const newToken = await tryRefresh();
-    if (!newToken) return res; // cleared already
+    if (!newToken) return res;
 
     res = await makeReq(newToken);
-    if (res.status === 401) authStorage.clear(); // still failing → hard logout
+    if (res.status === 401) authStorage.clear();
   } catch {
-    // Transient (429, 5xx, offline) — preserve session, return original 401
     console.warn('[fetchWithAuth] Transient refresh error, session preserved');
   }
 
