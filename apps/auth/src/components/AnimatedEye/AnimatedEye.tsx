@@ -7,6 +7,7 @@ export default function AnimatedEye({ isVisible, onClick }: { isVisible: boolean
         <button
             type="button"
             onClick={onClick}
+            suppressHydrationWarning
             title={isVisible ? "Hide password" : "Show password"}
             style={{
                 background: 'none',
