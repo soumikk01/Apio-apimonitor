@@ -21,6 +21,28 @@ import { auth } from './better-auth';
 import { validateEmail } from './email-validator';
 import { PrismaService } from '../prisma/prisma.service';
 
+// ── Cookie helpers ────────────────────────────────────────────────────────────
+/** Parse a single cookie value from the raw Cookie header without cookie-parser. */
+function parseCookieValue(header: string | undefined, name: string): string | undefined {
+  if (!header) return undefined;
+  const match = header.split(';').map(c => c.trim()).find(c => c.startsWith(`${name}=`));
+  return match?.slice(name.length + 1);
+}
+
+/** Set the refresh-token HttpOnly cookie on the response. */
+function setRefreshCookie(res: import('express').Response, token: string): void {
+  const isSecure = process.env.NODE_ENV === 'production';
+  res.cookie('rt', token, {
+    httpOnly: true,
+    secure: isSecure,
+    sameSite: 'strict', // never sent on cross-site navigations — CSRF-proof
+    domain: isSecure ? '.apio.one' : undefined,
+    maxAge: 30 * 24 * 60 * 60 * 1000, // 30 days
+    path: '/',
+  });
+}
+
+
 @Controller('auth')
 export class AuthController {
   constructor(
@@ -175,17 +197,31 @@ export class AuthController {
       return res.redirect(projectsUrl);
     }
 
-    const sessionToken = await this.authService.autoLoginWithToken(email, token);
+    const sessionToken = await this.authService.autoLoginWithToken(email, token).catch(() => null);
     if (!sessionToken) {
       return res.redirect(projectsUrl);
     }
 
-    const isProduction = process.env.NODE_ENV === 'production';
-    res.cookie('better-auth.session_token', sessionToken, {
+    // BetterAuth reads the session cookie via getSignedCookie(name, secret) which
+    // verifies an HMAC-SHA256 signature appended as "token.signature".
+    // Plain unsigned cookies are silently rejected → user appears logged-out.
+    // In production BetterAuth also prepends "__Secure-" to the cookie name when
+    // the baseURL starts with https://.
+    const secret = process.env.BETTER_AUTH_SECRET ?? '';
+    const { createHmac } = await import('crypto');
+    const signature = createHmac('sha256', secret).update(sessionToken).digest('base64url');
+    const signedValue = `${sessionToken}.${signature}`;
+
+    const betterAuthBase = process.env.BETTER_AUTH_BASE_URL ?? 'http://localhost:4000';
+    const isSecure = betterAuthBase.startsWith('https://') || process.env.NODE_ENV === 'production';
+    const cookiePrefix = isSecure ? '__Secure-' : '';
+    const cookieName = `${cookiePrefix}better-auth.session_token`;
+
+    res.cookie(cookieName, signedValue, {
       httpOnly: true,
-      secure: isProduction,
+      secure: isSecure,
       sameSite: 'lax',
-      domain: isProduction ? '.apio.one' : undefined,
+      domain: isSecure ? '.apio.one' : undefined,
       maxAge: 30 * 24 * 60 * 60 * 1000,
       path: '/',
     });
@@ -284,8 +320,8 @@ export class AuthController {
   @Get('session-token')
   async sessionToken(
     @Req() req: { headers: Record<string, string | string[] | undefined> },
+    @Res({ passthrough: true }) res: Response,
   ) {
-    // Convert Express request headers to the format BetterAuth expects
     const headers = new Headers();
     Object.entries(req.headers).forEach(([k, v]) => {
       if (v) headers.set(k, Array.isArray(v) ? v.join(',') : v);
@@ -295,6 +331,51 @@ export class AuthController {
     if (!session?.user?.email)
       throw new UnauthorizedException('No active session');
 
-    return this.authService.sessionToken(session.user.email);
+    const tokens = await this.authService.sessionToken(session.user.email);
+    setRefreshCookie(res, tokens.refreshToken);
+    return { accessToken: tokens.accessToken };
+  }
+
+  /**
+   * POST /auth/refresh
+   * Reads refresh token from HttpOnly cookie; rotates it and returns new accessToken.
+   */
+  @Throttle({
+    short: { ttl: 60_000, limit: 30 },
+    medium: { ttl: 300_000, limit: 120 },
+  })
+  @Post('refresh-secure')
+  @HttpCode(HttpStatus.OK)
+  async refreshSecure(
+    @Req() req: { headers: Record<string, string | string[] | undefined> },
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const rt = parseCookieValue(
+      req.headers['cookie'] as string | undefined,
+      'rt',
+    );
+    if (!rt) throw new UnauthorizedException('No refresh token');
+    const tokens = await this.authService.refresh(rt);
+    setRefreshCookie(res, tokens.refreshToken);
+    return { accessToken: tokens.accessToken };
+  }
+
+  /**
+   * POST /auth/logout
+   * Clears the HttpOnly refresh-token cookie server-side.
+   */
+  @SkipThrottle()
+  @Post('logout')
+  @HttpCode(HttpStatus.OK)
+  logout(@Res({ passthrough: true }) res: Response) {
+    const isSecure = process.env.NODE_ENV === 'production';
+    res.clearCookie('rt', {
+      httpOnly: true,
+      secure: isSecure,
+      sameSite: 'strict',
+      domain: isSecure ? '.apio.one' : undefined,
+      path: '/',
+    });
+    return { ok: true };
   }
 }

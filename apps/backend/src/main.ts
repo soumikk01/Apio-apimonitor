@@ -120,8 +120,20 @@ async function bootstrap() {
       'BetterAuth',
       'BETTER_AUTH_SECRET not set — sessions can be forged! Set a strong secret in .env',
     );
+    if (process.env.NODE_ENV === 'production') {
+      console.error('\n  ✘ FATAL: BETTER_AUTH_SECRET is required in production. Exiting.\n');
+      process.exit(1);
+    }
   } else {
     ok('BetterAuth', 'Secret loaded');
+  }
+
+  // ── 7. JWT secrets (hard exit in production) ─────────────────────────
+  if (!process.env.JWT_SECRET || !process.env.JWT_REFRESH_SECRET) {
+    if (process.env.NODE_ENV === 'production') {
+      console.error('\n  ✘ FATAL: JWT_SECRET and JWT_REFRESH_SECRET are required in production. Exiting.\n');
+      process.exit(1);
+    }
   }
 
   console.log(`${c.gray}  ─────────────────────────────────────────${c.reset}`);

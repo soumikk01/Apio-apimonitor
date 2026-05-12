@@ -73,17 +73,17 @@ async function exchangeSessionForJwt(): Promise<boolean> {
   try {
     const res = await fetch(`${API}/auth/session-token`, {
       method: 'GET',
-      credentials: 'include', // send the BetterAuth cookie
+      credentials: 'include', // sends BetterAuth cookie; response sets 'rt' HttpOnly cookie
     });
     if (!res.ok) return false;
 
-    const data = await res.json() as { accessToken?: string; refreshToken?: string };
+    const data = await res.json() as { accessToken?: string };
     if (!data.accessToken) return false;
 
     authStorage.clear();
     resetProfilePromise();
     authStorage.setAccessToken(data.accessToken);
-    if (data.refreshToken) authStorage.setRefreshToken(data.refreshToken);
+    // refreshToken is now set as HttpOnly cookie 'rt' by the backend — never stored in JS
     return true;
   } catch {
     return false;
@@ -169,11 +169,11 @@ export function useAuth() {
   const logout = useCallback(async () => {
     resetProfilePromise();
     authStorage.clear();
-    // Sign out from BetterAuth (clears cookie)
-    await fetch(`${API.replace('/api/v1', '')}/api/v1/auth/better/sign-out`, {
-      method: 'POST',
-      credentials: 'include',
-    }).catch(() => { /* best-effort */ });
+    // Clear the HttpOnly 'rt' refresh cookie server-side + BetterAuth session cookie
+    await Promise.allSettled([
+      fetch(`${API}/auth/logout`, { method: 'POST', credentials: 'include' }),
+      fetch(`${API}/auth/better/sign-out`, { method: 'POST', credentials: 'include' }),
+    ]);
     setState({ user: null, accessToken: null, isAuthenticated: false, isLoading: false });
   }, []);
 
