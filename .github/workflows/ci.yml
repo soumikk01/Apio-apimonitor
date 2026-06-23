@@ -305,7 +305,7 @@ jobs:
 
       # Set up QEMU for multi-platform emulation (linux/amd64 + linux/arm64)
       - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
+        uses: docker/setup-qemu-action@v4
 
       # BuildKit unlocks: layer cache, parallel stages, faster builds
       - name: Set up Docker Buildx
