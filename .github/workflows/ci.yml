@@ -309,7 +309,7 @@ jobs:
 
       # BuildKit unlocks: layer cache, parallel stages, faster builds
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
 
       # ── 6a. Lint the Dockerfile before building ───────────────────────────────
       - name: Lint Dockerfile (Hadolint)
