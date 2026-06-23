@@ -321,7 +321,7 @@ jobs:
 
       # ── 6b. Build image (no push) — validates the Dockerfile is correct ────────
       - name: Build backend Docker image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: apps/backend
           file: apps/backend/Dockerfile
